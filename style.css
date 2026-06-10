@@ -105,7 +105,7 @@ input,select,button,textarea{font-family:inherit}
 .btn-out{background:transparent;border:1.5px solid rgba(201,167,82,0.5);color:#c9a752}
 .btn-red{background:#fde8e8;color:#a32d2d}
 .btn-green{background:#d4f0e3;color:#166a3f}
-.btn-purple{background:linear-gradient(135deg,#6d28d9,#7c3aed);color:#fff}
+.btn-purple{background:linear-gradient(135deg,#170ec2,#7c3aed);color:#fff}
 .btn-sm{padding:4px 10px;font-size:11px}
 .btn-add{width:100%;padding:8px;background:#f7f7f7;border:1px dashed #ccc;border-radius:6px;color:#666;font-size:12px;cursor:pointer;margin-top:7px;text-align:center;transition:all 0.15s}
 .btn-add:hover{background:#fff8e6;border-color:#c9a752;color:#a06b00}

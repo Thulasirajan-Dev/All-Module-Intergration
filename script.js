@@ -29,7 +29,7 @@ function fmtDateTime(iso){
   try{const d=new Date(iso);return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});}catch(e){return iso;}
 }
 
-const PROJECT_TYPES_NEW=["Retail","F&B","Office","New Construction","Private","Interior Design","Others"];
+const PROJECT_TYPES_NEW=["Retail","Office","Industrial","Residential","Educational","Entertainment","Agricultural","Others"];
 
 const PROPOSAL_STAGES=[
   "Project assigned",
@@ -504,11 +504,7 @@ function renderNewReapprovals(){
     </div>`).join("");
   _newReapprovals.forEach((_,i)=>{rteInit("new-reapp-editor-"+i,_newReapprovals[i].scopeHtml||"");});
 }
-function toggleProjTypeStyle(i){
-  const cb=document.getElementById("ptype-"+i);
-  const opt=document.getElementById("ptype-opt-"+i);
-  if(cb&&opt)opt.classList.toggle("selected",cb.checked);
-}
+
 function toggleEditProjTypeStyle(i){
   const cb=document.getElementById("eptype-"+i);
   const opt=document.getElementById("eptype-opt-"+i);
@@ -807,24 +803,43 @@ function renderProposals(){
   h+=`</div><div class="footer">Winner Holistic Consultants · Proposals Team · <a href="${window.location.pathname}" style="color:#888">Back</a></div>`;
   return h;
 }
-
+function toggleProjTypeNew(i){
+  const cb=document.getElementById("projtype-"+i);
+  const opt=document.getElementById("projtype-opt-"+i);
+  if(cb&&opt)opt.classList.toggle("selected",cb.checked);
+}
 function renderNewProposalForm(){
   return`<div class="sbox">
     <div class="sbox-title">Project Details</div>
     <div class="fgrid">
       <div class="ff"><div class="fl">Project Folder <span class="req-star">*</span></div>
-        <input class="fi" id="pp-title" placeholder="e.g. Marina Mall – Shop No. 42"/></div>
+  <input class="fi" id="pp-title" placeholder="e.g. Marina Mall – Shop No. 42"/></div>
+
       <div><div class="fl">Client Name <span class="req-star">*</span></div>
         <input class="fi" id="pp-client" placeholder="e.g. Al Baraka Trading LLC"/></div>
       <div><div class="fl">Unit / Shop No. <span class="req-star">*</span></div>
         <input class="fi" id="pp-unit" placeholder="e.g. G-42"/></div>
       <div class="ff"><div class="fl">Location / Mall <span class="req-star">*</span></div>
         <input class="fi" id="pp-location" placeholder="e.g. Marina Mall, Abu Dhabi"/></div>
-      <div><div class="fl">Project Type <span class="req-star">*</span></div>
-        <select class="fi" id="pp-unit-type">
-          ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}">${t}</option>`).join("")}
-        </select></div>
-      <div><div class="fl">Expected Start Date</div>
+      <div class="ff"><div class="fl">Project Type <span class="req-star">*</span>
+  <span style="font-size:10px;color:#888;font-weight:400;margin-left:6px">(select all that apply)</span>
+</div>
+<div class="proj-type-grid">
+  ${PROJECT_TYPES_NEW.map((t,i)=>`
+    <label class="proj-type-option" id="projtype-opt-${i}">
+      <input type="checkbox" id="projtype-${i}" value="${t}" onchange="toggleProjTypeNew(${i})"/>
+      <span class="proj-type-label">${t}</span>
+    </label>`).join("")}
+</div></div>
+<div class="ff"><div class="fl">Project Folder Category <span class="req-star">*</span></div>
+  <select class="fi" id="pp-folder">
+    <option value="">— Select Folder —</option>
+    <option value="Fitout Folder">Fitout Folder</option>
+    <option value="Live Folder">Live Folder</option>
+    <option value="ID Folder">ID Folder</option>
+    <option value="Private Folder">Private Folder</option>
+  </select></div>
+  <div class="ff"><div class="fl">Expected Project Start Date <span class="req-star">*</span></div>
         <input class="fi" type="date" id="pp-start"/></div>
       <div class="ff"><div class="fl">Proposal Stage <span class="req-star">*</span></div>
         <select class="fi" id="pp-proposal-stage" onchange="toggleProposalStageCoord()">
@@ -837,18 +852,7 @@ function renderNewProposalForm(){
       <div><div class="fl">Submitted By <span class="req-star">*</span></div>
         <input class="fi" id="pp-by" placeholder="Your name"/></div>
     </div>
-    <div style="margin-top:12px">
-      <div class="fl" style="margin-bottom:6px">Project Folder Category <span class="req-star">*</span>
-        <span style="font-size:10px;color:#888;font-weight:400;margin-left:6px">(select all that apply)</span>
-      </div>
-      <div class="proj-type-grid">
-        ${["Fitout Project","Live Project","ID Project","Private Project","Others"].map((t,i)=>`
-          <label class="proj-type-option" id="ptype-opt-${i}">
-            <input type="checkbox" id="ptype-${i}" value="${t}" onchange="toggleProjTypeStyle(${i})"/>
-            <span class="proj-type-label">${t}</span>
-          </label>`).join("")}
-      </div>
-    </div>
+    
   </div>
   <div class="quot-box">
     <div class="quot-box-title">💼 Main Quotation</div>
@@ -1065,18 +1069,7 @@ function renderProposalEditForm(){
         <div><div class="fl">Submitted By</div>
           <input class="fi" value="${esc(prop.submittedBy||"")}" oninput="PROJ.proposal.submittedBy=this.value" placeholder="Your name"/></div>
       </div>
-      <div style="margin-top:12px">
-        <div class="fl" style="margin-bottom:6px">Project Folder Category <span class="req-star">*</span></div>
-        <div class="proj-type-grid">
-          ${["Fitout Project","Live Project","ID Project","Private Project","Others"].map((t,i)=>{
-            const sel=ptypes.includes(t);
-            return`<label class="proj-type-option ${sel?"selected":""}" id="eptype-opt-${i}">
-              <input type="checkbox" id="eptype-${i}" value="${t}" ${sel?"checked":""} onchange="toggleEditProjTypeStyle(${i});updateEditProjTypes()"/>
-              <span class="proj-type-label">${t}</span>
-            </label>`;
-          }).join("")}
-        </div>
-      </div>
+      
     </div>
 
     <div class="quot-box">
@@ -1126,10 +1119,7 @@ function renderProposalEditForm(){
   return h;
 }
 
-function updateEditProjTypes(){
-  if(!PROJ)return;
-  PROJ.proposal.projectTypes=["Fitout Project","Live Project","ID Project","Private Project","Others"].filter((_,i)=>document.getElementById("eptype-"+i)?.checked);
-}
+
 function addEditReapproval(){
   if(!PROJ.proposal.reapprovals)PROJ.proposal.reapprovals=[];
   PROJ.proposal.reapprovals.push({title:"",quotationNumber:"",value:"",scopeHtml:""});
@@ -1173,21 +1163,21 @@ async function submitProposal(){
   const pStage=document.getElementById("pp-proposal-stage")?.value||"Project not yet assigned";
   const coord=pStage==="Project assigned"?(document.getElementById("pp-coord")?.value||"").trim():"";
   const by=(document.getElementById("pp-by")?.value||"").trim();
-  const unitType=document.getElementById("pp-unit-type")?.value||"Retail";
+  const unitType=PROJECT_TYPES_NEW.filter((_,i)=>document.getElementById("projtype-"+i)?.checked).join(", ")||"Retail";
   const startDate=(document.getElementById("pp-start")?.value||"").trim();
   const quotNum=(document.getElementById("pp-quot-num")?.value||"").trim();
   const quotVal=(document.getElementById("pp-quot-val")?.value||"").trim();
   const scopeEl=document.getElementById("pp-scope-editor");
   const scopeHtml=scopeEl?scopeEl.innerHTML:"";
   const scopeText=scopeEl?scopeEl.innerText.trim():"";
-  const selectedTypes=["Fitout Project","Live Project","ID Project","Private Project","Others"].filter((_,i)=>document.getElementById("ptype-"+i)?.checked);
+  const folder=document.getElementById("pp-folder")?.value||"";
   const finalReapprovals=_newReapprovals.map((r,i)=>{
     const ed=document.getElementById("new-reapp-editor-"+i);
     return{...r,scopeHtml:ed?ed.innerHTML:r.scopeHtml||""};
   });
-  if(!title||!client||!unit||!location||!by||!scopeText){alert("Please fill in all required fields including Scope of Work.");return;}
-  if(!quotNum||!quotVal){alert("Please enter the main Quotation Number and Value.");return;}
-  if(!selectedTypes.length){alert("Please select at least one Project Folder category.");return;}
+if(!title||!client||!unit||!location||!coord||!by||!scopeText){alert("Please fill in all required fields including Scope of Work.");return;}
+if(!folder){alert("Please select a Project Folder Category.");return;}  if(!quotNum||!quotVal){alert("Please enter the main Quotation Number and Value.");return;}
+  
   if(pStage==="Project assigned"&&!coord){alert("Please enter the Coordinator name when 'Project assigned' is selected.");return;}
   document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Submitting project...</div></div>`;
   const p=newProj(title);
@@ -1197,10 +1187,10 @@ async function submitProposal(){
   p.proposal.expectedStartDate=startDate;p.proposal.submittedBy=by;
   p.proposal.submittedAt=new Date().toISOString().split("T")[0];
   p.proposal.quotationNumber=quotNum;
-  p.proposal.projectTypes=selectedTypes;
   p.proposal.reapprovals=finalReapprovals;
   p.proposal.proposalStage=pStage;
   p.workflowStatus="allocated";
+  p.proposal.folder=folder;
   p.activityLog=[{stageName:"Project Created",oldStatus:"",newStatus:"allocated",by,note:"Submitted by proposals team",at:new Date().toISOString()}];
   p.proposalLog=[{action:"Project Created",by,detail:`Quot: ${quotNum} · AED ${quotVal} · Stage: ${pStage}`,at:new Date().toISOString()}];
   _newReapprovals=[];
