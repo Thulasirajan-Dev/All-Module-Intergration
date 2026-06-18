@@ -1,6 +1,6 @@
 // ============================================================
 //  Winner Holistic Consultants – Project Tracker
-//  script.js — Final Consolidated (May-8 v3)
+//  script.js — Final Consolidated (May-8 Update v2)
 // ============================================================
 
 const DB=FIREBASE_URL.replace(/\/$/,"");
@@ -29,17 +29,8 @@ function fmtDateTime(iso){
   try{const d=new Date(iso);return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});}catch(e){return iso;}
 }
 
-const PROJECT_TYPES_NEW=["Retail","Office","Industrial","Residential","Educational","Entertainment","Agricultural","Others"];
-
-const PROPOSAL_STAGES=[
-  "Project assigned",
-  "Project not yet assigned",
-  "Quotation sent",
-  "Revision Required",
-  "Awaiting details from client",
-  "Project cancelled",
-  "Project not awarded"
-];
+const PROJECT_TYPES_NEW=["Retail","Office","Industrial","Residential","Educational","Entertainment","Agricultural","Other"];
+const FOLDER_CATEGORIES=["Fitout Folder","Live Folder","ID Folder","Private Folder"];
 
 const STAGE_OPTIONS={
   scope:[
@@ -116,6 +107,13 @@ const STATUS_DISPLAY={
 };
 
 function isStageComplete(st){return["received","approved","completed","completed-signed","approved-bcc"].includes(st.status||"");}
+function needsAppNum(type,status){
+  if(type==="registration"&&status==="submitted")return true;
+  if(type==="approval_meps"&&status==="under-review-meps")return true;
+  if((type==="approval_portal"||type==="inspection")&&status==="under-review-portal")return true;
+  if(type==="gis"&&status==="submitted-meps")return true;
+  return false;
+}
 function hasDateFields(type){return!["scope","site_work","completed"].includes(type);}
 function dateLabelA(type){return type==="drawing_prep"?"Drawing/Document Received":"Submission Date";}
 function dateLabelB(type){return type==="drawing_prep"?"Document/Drawing Completed":"Approved Date";}
@@ -228,17 +226,16 @@ function newProj(title){
     workflowStatus:"proposal",
     activityLog:[],
     proposalLog:[],
-    proposal:{
-      scopeHtml:"",estimatedValue:"",expectedStartDate:"",
+   proposal:{
+      scopeHtml:"",scopeItems:[],estimatedValue:"",expectedStartDate:"",
       submittedBy:"",submittedAt:"",
       quotationNumber:"",
       projectTypes:[],
-      reapprovals:[],
-      proposalStage:"Project not yet assigned"
+      reapprovals:[]
     },
     project:{
       title:title||"New Project",client:"",location:"",unit:"",
-      unitType:"Retail",coordinator:"",
+      unitType:[],coordinator:"",
       consultant:"Winner Holistic Consultants"
     },
     stages:blankStages(),docs:blankDocs()
@@ -250,14 +247,16 @@ function migrateProject(p){
   if(!p.workflowStatus)p.workflowStatus="allocated";
   if(!p.activityLog)p.activityLog=[];
   if(!p.proposalLog)p.proposalLog=[];
-  if(!p.proposal)p.proposal={scopeHtml:"",estimatedValue:"",expectedStartDate:"",submittedBy:"",submittedAt:"",quotationNumber:"",projectTypes:[],reapprovals:[],proposalStage:"Project not yet assigned"};
+  if(!p.proposal)p.proposal={scopeHtml:"",estimatedValue:"",expectedStartDate:"",submittedBy:"",submittedAt:"",quotationNumber:"",projectTypes:[],reapprovals:[]};
   if(!p.proposal.quotationNumber)p.proposal.quotationNumber="";
   if(!p.proposal.projectTypes)p.proposal.projectTypes=[];
   if(!p.proposal.reapprovals)p.proposal.reapprovals=[];
-  if(!p.proposal.proposalStage)p.proposal.proposalStage="Project not yet assigned";
+    if(!p.proposal.reapprovals)p.proposal.reapprovals=[];
+  if(!p.proposal.scopeItems)p.proposal.scopeItems=[];
   if(p.project){
     if(!p.project.coordinator)p.project.coordinator="";
-    if(!p.project.unitType)p.project.unitType="Retail";
+    if(!p.project.unitType)p.project.unitType=[];
+    else if(!Array.isArray(p.project.unitType))p.project.unitType=[p.project.unitType];
     if(p.project.customUnitType!=null)delete p.project.customUnitType;
   }
   if(p.stages&&Array.isArray(p.stages)){
@@ -268,27 +267,22 @@ function migrateProject(p){
 
 const urlParams=new URLSearchParams(window.location.search);
 const PROJECT_ID=urlParams.get("id");
-const IS_ADMIN_PAGE=urlParams.get("admin")==="1";
 let ALL_PROJECTS={},PROJ=null;
 let S={
-  mode:PROJECT_ID?"client":(IS_ADMIN_PAGE?"adminLogin":"landing"),
+  mode:PROJECT_ID?"client":"landing",
   tab:"stages",loginErr:"",
   authedCoord:false,authedAdmin:false,authedProposal:false,
   saved:false,saving:false,modal:null,
   search:"",filterStatus:"all",filterType:"all",
   filterCoord:"all",filterStage:"all",filterProjType:"all",
-  filterProposalStage:"all",
   adminTab:"proposals",
   adminPopup:null,
   coordName:"",coordSearch:"",
   coordFilterStatus:"all",coordFilterProjType:"all",
   coordFilterStage:"all",coordFilterReapp:"all",coordFilterQuot:"",
-  proposalTab:"new",
-  propFilterCoord:"",propFilterProjType:"all",propFilterDateFrom:"",propFilterDateTo:"",
+  proposalTab:"new",  propFilterCoord:"",propFilterProjType:"all",propFilterDateFrom:"",propFilterDateTo:"",
   propFilterClient:"",propFilterValue:"",propFilterQuot:"",propFilterReapp:"all",
-  propFilterProposalStage:"all",
-  // Edit proposal state
-  editingProposalId:null
+  selectedStages:[],bulkStatus:""
 };
 
 let _dragSrc=null;
@@ -304,7 +298,7 @@ function dragOver(e,i){
 function dragLeave(e){if(!e.currentTarget.contains(e.relatedTarget))e.currentTarget.classList.remove("drag-over");}
 function dragDrop(e,i){
   e.preventDefault();e.stopPropagation();_clearDrag();
-  if(_dragSrc!==null&&_dragSrc!==i&&PROJ){const[moved]=PROJ.stages.splice(_dragSrc,1);PROJ.stages.splice(i,0,moved);render();}
+  if(_dragSrc!==null&&_dragSrc!==i&&PROJ){const[moved]=PROJ.stages.splice(_dragSrc,1);PROJ.stages.splice(i,0,moved);S.selectedStages=[];S.bulkStatus="";render();}
   _dragSrc=null;
 }
 function dragEnd(){_clearDrag();_dragSrc=null;}
@@ -315,8 +309,7 @@ async function boot(){
     const data=await fbGet("projects/"+PROJECT_ID);
     if(data){PROJ=migrateProject(data);S.mode="client";render();}
     else document.getElementById("app").innerHTML=`<div style="padding:60px 20px;text-align:center"><div style="font-size:40px;margin-bottom:12px">🔍</div><div style="font-size:16px;font-weight:600;color:#333;margin-bottom:6px">Project Not Found</div><div style="font-size:13px;color:#888">This link may be invalid or the project was deleted.</div></div>`;
-  } else if(IS_ADMIN_PAGE){S.mode="adminLogin";render();}
-  else{S.mode="landing";render();}
+  } else{S.mode="landing";render();}
 }
 async function saveProj(){
   if(!PROJ)return;S.saving=true;render();
@@ -334,13 +327,11 @@ async function loadProposalProjects(){
   ALL_PROJECTS=(await fbGet("projects"))||{};S.mode="proposals";render();
 }
 
-function isFB(){return PROJ&&PROJ.project.unitType==="F&B";}
+function isFB(){return PROJ&&natureArr(PROJ.project.unitType).includes("F&B");}
 function visStages(){return PROJ?PROJ.stages:[];}
 function doneCount(){return visStages().filter(s=>isStageComplete(s)).length;}
 function pct(){return Math.round(doneCount()/Math.max(visStages().length,1)*100);}
-function projectLink(id){return window.location.origin+window.location.pathname+"?id="+id;}
-function adminLink(){return window.location.origin+window.location.pathname+"?admin=1";}
-function projPct(p){const vis=p.stages||[];return Math.round(vis.filter(s=>isStageComplete(s)).length/Math.max(vis.length,1)*100);}
+function projectLink(id){return window.location.origin+window.location.pathname+"?id="+id;}function projPct(p){const vis=p.stages||[];return Math.round(vis.filter(s=>isStageComplete(s)).length/Math.max(vis.length,1)*100);}
 function projStatus(p){
   if(p.workflowStatus==="proposal")return"proposal";
   if(p.workflowStatus==="allocated")return"allocated";
@@ -366,6 +357,96 @@ function dTag(s){
 }
 function copyText(txt){navigator.clipboard.writeText(txt).then(()=>alert("Link copied!\n\n"+txt)).catch(()=>prompt("Copy this link:",txt));}
 
+function csvEsc(v){
+  const s=String(v==null?"":v);
+  if(/[",\n]/.test(s))return'"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function exportFilteredCSV(){
+  const rows=_lastFilteredProjects||[];
+  if(!rows.length){alert("No records to export.");return;}
+  const headers=["Project Folder","Client","Location","Unit","Nature of the Project","Coordinator","Status","Quotation Number","Quotation Value (AED)","Re-approvals Count","Stages Completed","Total Stages","Progress %","Active Stage","Created Date","Client Link"];
+  const lines=[headers.map(csvEsc).join(",")];
+  rows.forEach(p=>{
+    const pr=p.project||{},prop=p.proposal||{};
+    const st=projStatus(p),pc=projPct(p);
+    const stCls={done:"Completed",active:"In Progress",proposal:"Proposal",allocated:"Allocated",new:"Not Started"}[st]||st;
+    const stages=p.stages||[];
+    const doneN=stages.filter(s=>isStageComplete(s)).length;
+    const activeStage=stages.find(s=>{const sv=s.status||"";return sv&&!["received","approved","completed","completed-signed","approved-bcc"].includes(sv);});
+    const reapps=(prop.reapprovals||[]).length;
+    lines.push([
+      pr.title||"",pr.client||"",pr.location||"",pr.unit||"",natureCSV(pr.unitType),pr.coordinator||"",
+      stCls,prop.quotationNumber||"",prop.estimatedValue||"",
+      reapps,doneN,stages.length,pc,activeStage?activeStage.name:"",p.createdAt||"",projectLink(p.id)
+    ].map(csvEsc).join(","));
+  });
+  const csv=lines.join("\r\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=`WHC_Projects_Export_${new Date().toISOString().split("T")[0]}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportProposalPDF(id){
+  const p=ALL_PROJECTS[id];if(!p)return;
+  const pr=p.project||{},prop=p.proposal||{};
+  const items=prop.scopeItems||[];
+  const reapps=prop.reapprovals||[];
+  const win=window.open("","_blank");
+  if(!win){alert("Please allow popups for this site to export as PDF.");return;}
+  win.document.write(`<!DOCTYPE html><html><head><title>${esc(pr.title||"Project Proposal")}</title>
+  <meta charset="UTF-8"/>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#222;padding:30px;font-size:13px;max-width:900px;margin:0 auto}
+    h1{font-size:20px;margin:0 0 4px}
+    h2{font-size:14px;margin:20px 0 8px;border-bottom:1px solid #ccc;padding-bottom:4px;color:#1a3a5c}
+    table{width:100%;border-collapse:collapse;margin-top:4px}
+    td,th{border:1px solid #ddd;padding:6px 8px;font-size:12px;text-align:left;vertical-align:top}
+    th{background:#f7f7f7;width:160px}
+    .meta{font-size:12px;color:#555;margin-bottom:10px}
+    .totrow td{font-weight:700}
+    .reapp{margin-bottom:12px;padding:8px 10px;background:#fdf6ef;border:1px solid #e8c090;border-radius:6px}
+    @media print{body{padding:10px}}
+  </style></head><body>
+  <h1>${esc(pr.title||"Project Proposal")}</h1>
+  <div class="meta">${esc(pr.client||"")} · ${esc(pr.location||"")} · Unit: ${esc(pr.unit||"")}</div>
+  <h2>Project Details</h2>
+  <table>
+    <tr><th>Client</th><td>${esc(pr.client||"")}</td></tr>
+    <tr><th>Location</th><td>${esc(pr.location||"")}</td></tr>
+    <tr><th>Unit</th><td>${esc(pr.unit||"")}</td></tr>
+    <tr><th>Nature of the Project</th><td>${esc(natureDisplay(pr.unitType))}</td></tr>
+    <tr><th>Coordinator</th><td>${esc(pr.coordinator||"")}</td></tr>
+  </table>
+  <h2>Main Quotation</h2>
+  <table>
+    <tr><th>Quotation Number</th><td>${esc(prop.quotationNumber||"")}</td></tr>
+    <tr><th>Quotation Value (AED)</th><td>${esc(prop.estimatedValue||"")}</td></tr>
+  </table>
+  <h2>Scope of Works</h2>
+  <table><tr><th style="width:60px">Ref</th><th style="width:auto">Title</th><th>Details</th><th style="width:90px">AED</th></tr>
+  ${items.map(it=>`<tr><td>${esc(it.ref||"")}</td><td>${esc(it.title||"")}</td><td>${esc(it.details||"")}</td><td>${fmtMoney(it.value||0)}</td></tr>`).join("")}
+  <tr><td colspan="3" style="text-align:right">Sub-Total</td><td>${fmtMoney(scopeSubtotal(items))}</td></tr>
+  <tr><td colspan="3" style="text-align:right">VAT (5%)</td><td>${fmtMoney(scopeVat(items))}</td></tr>
+  <tr class="totrow"><td colspan="3" style="text-align:right">Total incl. VAT</td><td>${fmtMoney(scopeTotal(items))}</td></tr>
+  </table>
+  ${prop.scopeHtml?`<h2>Additional Notes</h2><div>${prop.scopeHtml}</div>`:""}
+  ${reapps.length?`<h2>Re-approval Quotations</h2>${reapps.map((r,ri)=>`<div class="reapp">
+    <strong>Re-approval ${ri+1}${r.title?" — "+esc(r.title):""}</strong>
+    ${r.quotationNumber?" · "+esc(r.quotationNumber):""}${r.value?" · AED "+fmtMoney(r.value):""}
+    <div style="margin-top:4px">${r.scopeHtml||""}</div>
+  </div>`).join("")}`:""}
+  </body></html>`);
+  win.document.close();
+  const doPrint=()=>{try{win.focus();win.print();}catch(e){}};
+  win.onload=doPrint;
+  setTimeout(doPrint,400);
+}
+
 function propLog(action,by,detail){
   if(!PROJ)return;
   if(!PROJ.proposalLog)PROJ.proposalLog=[];
@@ -384,53 +465,50 @@ function stageStatusChange(i,newStatus){
   render();
 }
 
-// ── Stage Notes RTE (inline, per-stage) ──────────────────────
-function stageNotesToolbar(stageIdx){
-  const id=`stage-note-editor-${stageIdx}`;
-  return`<div class="se-notes-wrap">
-    <div class="se-notes-toolbar">
-      <select class="se-notes-sel" onchange="document.execCommand('formatBlock',false,this.value);this.value='p';document.getElementById('${id}').focus()">
-        <option value="p">Para</option><option value="h3">H1</option><option value="h4">H2</option>
-      </select>
-      <select class="se-notes-sel" onchange="document.execCommand('fontSize',false,this.value);document.getElementById('${id}').focus()">
-        <option value="">Size</option><option value="1">S</option><option value="3">M</option><option value="4">L</option><option value="5">XL</option>
-      </select>
-      <div class="se-notes-sep"></div>
-      <button class="se-notes-btn" onmousedown="event.preventDefault();document.execCommand('bold')"><b>B</b></button>
-      <button class="se-notes-btn" onmousedown="event.preventDefault();document.execCommand('italic')"><i>I</i></button>
-      <button class="se-notes-btn" onmousedown="event.preventDefault();document.execCommand('underline')"><u>U</u></button>
-      <div class="se-notes-sep"></div>
-      <button class="se-notes-btn" onmousedown="event.preventDefault();document.execCommand('insertUnorderedList')">•</button>
-      <button class="se-notes-btn" onmousedown="event.preventDefault();document.execCommand('insertOrderedList')">1.</button>
-      <div class="se-notes-sep"></div>
-      <button class="se-notes-btn" title="Table" onmousedown="event.preventDefault();insertStageNoteTable('${id}')">⊞</button>
-    </div>
-    <div class="se-notes-editor" id="${id}" contenteditable="true"
-      oninput="if(PROJ&&PROJ.stages[${stageIdx}])PROJ.stages[${stageIdx}].note=this.innerHTML"
-      placeholder="Notes (visible to client)..."></div>
-  </div>`;
+function toggleStageSelect(i){
+  const idx=S.selectedStages.indexOf(i);
+  if(idx>-1)S.selectedStages.splice(idx,1);
+  else S.selectedStages.push(i);
+  S.bulkStatus="";
+  render();
 }
-function insertStageNoteTable(targetId){
-  const rows=parseInt(prompt("Rows:",3)||3);
-  const cols=parseInt(prompt("Columns:",3)||3);
-  if(!rows||!cols)return;
-  let t="<table><tr>"+Array(cols).fill("<th>Header</th>").join("")+"</tr>";
-  for(let r=1;r<rows;r++)t+="<tr>"+Array(cols).fill("<td>Cell</td>").join("")+"</tr>";
-  t+="</table><p></p>";
-  document.getElementById(targetId)?.focus();
-  document.execCommand("insertHTML",false,t);
+function clearStageSelection(){S.selectedStages=[];S.bulkStatus="";render();}
+function commonStageOptions(){
+  if(!PROJ||!S.selectedStages.length)return[];
+  const types=S.selectedStages.map(i=>(PROJ.stages[i]&&PROJ.stages[i].type)||"scope");
+  const optionSets=types.map(t=>STAGE_OPTIONS[t]||STAGE_OPTIONS.scope);
+  const first=optionSets[0];
+  return first.filter(o=>optionSets.every(set=>set.some(o2=>o2.v===o.v)));
 }
-function initStageNoteEditors(){
-  setTimeout(()=>{
-    if(!PROJ)return;
-    PROJ.stages.forEach((st,i)=>{
-      const el=document.getElementById(`stage-note-editor-${i}`);
-      if(el)el.innerHTML=st.note||"";
-    });
-  },80);
+function applyBulkStatus(newStatus){
+  if(!PROJ||!S.selectedStages.length||newStatus===undefined)return;
+  if(!PROJ.activityLog)PROJ.activityLog=[];
+  S.selectedStages.forEach(i=>{
+    const st=PROJ.stages[i];if(!st)return;
+    const oldStatus=st.status||"";
+    if(oldStatus!==newStatus){
+      PROJ.activityLog.push({stageName:st.name||"Stage "+(i+1),oldStatus,newStatus,by:S.coordName||"Coordinator",note:st.note||"",at:new Date().toISOString()});
+    }
+    st.status=newStatus;
+  });
+  S.selectedStages=[];S.bulkStatus="";
+  render();
+}
+function moveStageUp(i){
+  if(!PROJ||i<=0)return;
+  const arr=PROJ.stages;
+  [arr[i-1],arr[i]]=[arr[i],arr[i-1]];
+  S.selectedStages=S.selectedStages.map(s=>s===i?i-1:s===i-1?i:s);
+  render();
+}
+function moveStageDown(i){
+  if(!PROJ||i>=PROJ.stages.length-1)return;
+  const arr=PROJ.stages;
+  [arr[i+1],arr[i]]=[arr[i],arr[i+1]];
+  S.selectedStages=S.selectedStages.map(s=>s===i?i+1:s===i+1?i:s);
+  render();
 }
 
-// ── Scope RTE toolbar ─────────────────────────────────────────
 function rteToolbar(targetId){
   return`<div class="rte-toolbar">
     <select class="rte-select" onchange="document.execCommand('formatBlock',false,this.value);this.value='p';document.getElementById('${targetId}').focus()">
@@ -464,7 +542,8 @@ function insertRteTable(targetId){
   const rows=parseInt(prompt("Number of rows:",3)||3);
   const cols=parseInt(prompt("Number of columns:",3)||3);
   if(!rows||!cols)return;
-  let table="<table><tr>"+Array(cols).fill("<th>Header</th>").join("")+"</tr>";
+  let table="<table>";
+  table+="<tr>"+Array(cols).fill("<th>Header</th>").join("")+"</tr>";
   for(let r=1;r<rows;r++)table+="<tr>"+Array(cols).fill("<td>Cell</td>").join("")+"</tr>";
   table+="</table><p></p>";
   document.getElementById(targetId)?.focus();
@@ -474,7 +553,6 @@ function rteInit(id,html){
   setTimeout(()=>{const el=document.getElementById(id);if(el&&html!==undefined)el.innerHTML=html||"";},60);
 }
 
-// ── Re-approval helpers ───────────────────────────────────────
 let _newReapprovals=[];
 function addNewReapprovalEntry(){
   _newReapprovals.push({title:"",quotationNumber:"",value:"",scopeHtml:""});
@@ -504,27 +582,146 @@ function renderNewReapprovals(){
     </div>`).join("");
   _newReapprovals.forEach((_,i)=>{rteInit("new-reapp-editor-"+i,_newReapprovals[i].scopeHtml||"");});
 }
+// ── Scope of Works templates & helpers ────────────────────────
+const SCOPE_TEMPLATES={
+  "fnb_kitchen":{
+    label:"F&B with Kitchen Ventilation",
+    items:[
+      {ref:"B.1",title:"ADM Submission Package & Fire/Life Safety Strategy",details:"Preparation of ADM Submission Package including Key Plan, Partition Layout & Section based on Final Architectural Drawings (CAD Files). Preparation of Fire and Life Safety Strategy Layout. Submission to ADM/ADCD and obtain approval.",value:11000},
+      {ref:"B.2",title:"Fire Protection System Shop Drawings approval from ADCD",details:"Receipt of Fire Protection (Fire Fighting, Fire Alarm, Emergency, Exit & Fire Suppression System) shop drawings from the Fire Contractor. Completeness check, submission to ADCD, follow-up and obtain approval.",value:5000},
+      {ref:"B.3",title:"Kitchen Ventilation System Design Drawings for ADCD Approval",details:"Collection of complete set of Kitchen Ventilation System Drawings & Design Calculation Notes from the Specialist Contractor. Compilation and submission to ADCD for approval.",value:5000},
+      {ref:"B.4",title:"Completion Certificate from ADCD",details:"Coordination with Main Contractor & Fire Contractor, collect and compile documents, apply for site inspection and obtain the completion certificate.",value:500},
+      {ref:"B.5",title:"Completion Certificate from ADM",details:"Coordination with Main Contractor & Fire Contractor, collect and compile documents, apply for site inspection and obtain the completion certificate.",value:500},
+      {ref:"B.6",title:"Scope of the Local Civil Contractor",details:"Pull out the Modification Building Permit from ADM after completion of approval (item B.1). Provide letters, certificates & shop drawing approvals/completion certificates from ADM/ADCD.",value:3000}
+    ]
+  },
+  "retail":{
+    label:"Retail (basic)",
+    items:[
+      {ref:"A.1",title:"Project Registration in MePS",details:"Registration of project in MePS portal, submission of required letters and documents.",value:3000},
+      {ref:"A.2",title:"Architectural Drawing Approval (ADM & CD-FLS)",details:"Preparation and submission of partition layout, furniture layout, sections and material details.",value:8000},
+      {ref:"A.3",title:"TAQA Drawing Approval",details:"Preparation and submission of electrical drawings, SLD and load schedule for TAQA approval.",value:6000}
+    ]
+  }
+};
 
-function toggleEditProjTypeStyle(i){
-  const cb=document.getElementById("eptype-"+i);
-  const opt=document.getElementById("eptype-opt-"+i);
+function blankScopeItem(){return{ref:"",title:"New scope item",details:"",value:0};}
+function scopeSubtotal(items){return(items||[]).reduce((s,i)=>s+(Number(i.value)||0),0);}
+function scopeVat(items){return scopeSubtotal(items)*0.05;}
+function scopeTotal(items){return scopeSubtotal(items)+scopeVat(items);}
+function fmtMoney(n){return Number(n||0).toLocaleString(undefined,{maximumFractionDigits:0});}
+
+let _newScopeItems=[];
+
+let _scopeDragSrc=null;
+function toggleNatureStyle(i){
+  const cb=document.getElementById("nature-"+i);
+  const opt=document.getElementById("nature-opt-"+i);
   if(cb&&opt)opt.classList.toggle("selected",cb.checked);
 }
-function toggleProposalStageCoord(){
-  const sel=document.getElementById("pp-proposal-stage");
-  const coordRow=document.getElementById("pp-coord-row");
-  if(!sel||!coordRow)return;
-  coordRow.style.opacity=sel.value==="Project assigned"?"1":"0.4";
-  const inp=document.getElementById("pp-coord");
-  if(inp)inp.disabled=sel.value!=="Project assigned";
+function natureArr(u){return Array.isArray(u)?u:(u?[u]:[]);}
+function natureDisplay(u){const a=natureArr(u);return a.length?a.join(", "):"—";}
+function natureCSV(u){return natureArr(u).join("; ");}
+function scopeDragStart(e,arrName,i){
+  if(["INPUT","SELECT","TEXTAREA","BUTTON"].includes(e.target.tagName)){e.preventDefault();return;}
+  _scopeDragSrc=i;e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",String(i));
+  setTimeout(()=>{const rows=document.querySelectorAll(`.${arrName}-row`);if(rows[i])rows[i].classList.add("dragging");},0);
 }
-function toggleEditProposalStageCoord(){
-  const sel=document.getElementById("ep-proposal-stage");
-  const coordRow=document.getElementById("ep-coord-row");
-  if(!sel||!coordRow)return;
-  coordRow.style.opacity=sel.value==="Project assigned"?"1":"0.4";
-  const inp=document.getElementById("ep-coord");
-  if(inp)inp.disabled=sel.value!=="Project assigned";
+function scopeDragOver(e,arrName,i){
+  e.preventDefault();e.dataTransfer.dropEffect="move";
+  document.querySelectorAll(`.${arrName}-row`).forEach((el,idx)=>{el.classList.toggle("drag-over",idx===i&&_scopeDragSrc!==null&&_scopeDragSrc!==i);});
+}
+function scopeDragLeave(e){if(!e.currentTarget.contains(e.relatedTarget))e.currentTarget.classList.remove("drag-over");}
+function _clearScopeDrag(arrName){document.querySelectorAll(`.${arrName}-row`).forEach(el=>el.classList.remove("dragging","drag-over"));}
+function scopeDragEnd(arrName){_clearScopeDrag(arrName);_scopeDragSrc=null;}
+
+function newScopeDrop(e,i){
+  e.preventDefault();e.stopPropagation();_clearScopeDrag("new-scope");
+  if(_scopeDragSrc!==null&&_scopeDragSrc!==i){const[moved]=_newScopeItems.splice(_scopeDragSrc,1);_newScopeItems.splice(i,0,moved);renderNewScopeItems();}
+  _scopeDragSrc=null;
+}
+function editScopeDrop(e,i){
+  e.preventDefault();e.stopPropagation();_clearScopeDrag("ep-scope");
+  if(_scopeDragSrc!==null&&_scopeDragSrc!==i&&PROJ){const[moved]=PROJ.proposal.scopeItems.splice(_scopeDragSrc,1);PROJ.proposal.scopeItems.splice(i,0,moved);renderEditScopeItems();}
+  _scopeDragSrc=null;
+}
+
+function loadScopeTemplateNew(){
+  const sel=document.getElementById("pp-scope-template");
+  const key=sel?sel.value:"";
+  if(!key||!SCOPE_TEMPLATES[key])return;
+  _newScopeItems=JSON.parse(JSON.stringify(SCOPE_TEMPLATES[key].items));
+  renderNewScopeItems();
+}
+function addNewScopeItem(){_newScopeItems.push(blankScopeItem());renderNewScopeItems();}
+function removeNewScopeItem(i){_newScopeItems.splice(i,1);renderNewScopeItems();}
+function scopeItemRow(item,i,arrName,getArr){
+  return`<div class="se ${arrName}-row" draggable="true"
+    ondragstart="scopeDragStart(event,'${arrName}',${i})" ondragover="scopeDragOver(event,'${arrName}',${i})"
+    ondragleave="scopeDragLeave(event)" ondrop="${arrName==="new-scope"?"newScopeDrop":"editScopeDrop"}(event,${i})" ondragend="scopeDragEnd('${arrName}')">
+    <div class="se-drag-handle" title="Drag to reorder">⠿</div>
+    <div class="se-num">${esc(item.ref||(i+1))}</div>
+    <div class="se-body">
+      <input class="se-ni" value="${esc(item.title||"")}" oninput="${getArr}[${i}].title=this.value" placeholder="Item title"/>
+      <textarea class="scope-details-fi" oninput="${getArr}[${i}].details=this.value" placeholder="Details / bullet points">${esc(item.details||"")}</textarea>
+      <div class="se-r">
+        <input class="se-time" value="${esc(item.ref||"")}" oninput="${getArr}[${i}].ref=this.value" placeholder="Ref (e.g. B.1)" style="width:90px"/>
+        <span class="se-label">AED</span>
+        <input class="se-time" type="number" value="${esc(item.value||0)}" oninput="${getArr}[${i}].value=this.value;${arrName==="new-scope"?"renderNewScopeItems()":"renderEditScopeItems()"}" placeholder="0"/>
+      </div>
+    </div>
+    <button class="btn-del" onclick="${arrName==="new-scope"?`removeNewScopeItem(${i})`:`PROJ.proposal.scopeItems.splice(${i},1);renderEditScopeItems()`}">✕</button>
+  </div>`;
+}
+function scopeTotalsBlock(items){
+  return`<div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px;font-size:12px">
+    <div style="display:flex;justify-content:space-between;padding:2px 0;color:#666"><span>Sub-Total</span><span>AED ${fmtMoney(scopeSubtotal(items))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;color:#666"><span>VAT (5%)</span><span>AED ${fmtMoney(scopeVat(items))}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:700;color:#222"><span>Total incl. VAT</span><span>AED ${fmtMoney(scopeTotal(items))}</span></div>
+  </div>`;
+}
+function renderNewScopeItems(){
+  const container=document.getElementById("pp-scope-items");
+  if(!container)return;
+  container.innerHTML=_newScopeItems.map((item,i)=>scopeItemRow(item,i,"new-scope","_newScopeItems")).join("")
+    +scopeTotalsBlock(_newScopeItems);
+}
+function renderEditScopeItems(){
+  const container=document.getElementById("ep-scope-items");
+  if(!container||!PROJ)return;
+  const items=PROJ.proposal.scopeItems||[];
+  container.innerHTML=items.map((item,i)=>scopeItemRow(item,i,"ep-scope","PROJ.proposal.scopeItems")).join("")
+    +scopeTotalsBlock(items);
+}
+function addEditScopeItem(){
+  if(!PROJ.proposal.scopeItems)PROJ.proposal.scopeItems=[];
+  PROJ.proposal.scopeItems.push(blankScopeItem());
+  renderEditScopeItems();
+}
+function loadScopeTemplateEdit(){
+  const sel=document.getElementById("ep-scope-template");
+  const key=sel?sel.value:"";
+  if(!key||!SCOPE_TEMPLATES[key]||!PROJ)return;
+  if(PROJ.proposal.scopeItems&&PROJ.proposal.scopeItems.length){
+    if(!confirm("This will replace the current scope items with the selected template. Continue?"))return;
+  }
+  PROJ.proposal.scopeItems=JSON.parse(JSON.stringify(SCOPE_TEMPLATES[key].items));
+  renderEditScopeItems();
+}
+function addCoordReapproval(){
+  if(!PROJ.proposal.reapprovals)PROJ.proposal.reapprovals=[];
+  PROJ.proposal.reapprovals.push({title:"",quotationNumber:"",value:"",scopeHtml:""});
+  render();
+}
+function saveCoordScope(){
+  if(!PROJ)return;
+  const scopeEl=document.getElementById("coord-scope-editor");
+  if(scopeEl)PROJ.proposal.scopeHtml=scopeEl.innerHTML;
+  (PROJ.proposal.reapprovals||[]).forEach((_,ri)=>{
+    const ed=document.getElementById("coord-reapp-editor-"+ri);
+    if(ed)PROJ.proposal.reapprovals[ri].scopeHtml=ed.innerHTML;
+  });
+  saveProj();
 }
 
 function showAdminPopup(title,subtitle,projects){
@@ -548,7 +745,7 @@ function openAdminPopupById(id){
     "prop-all":      {title:"All Proposals",sub:`${proposals.length} total proposals`,list:proposals},
     "prop-pending":  {title:"Pending Allocation",sub:"Not yet assigned to a coordinator",list:proposals.filter(p=>p.workflowStatus==="proposal")},
     "prop-alloc":    {title:"Allocated Proposals",sub:"Assigned to coordinators",list:proposals.filter(p=>p.workflowStatus==="allocated")},
-    "prop-reapp":    {title:"Proposals with Re-approvals",sub:"",list:proposals.filter(p=>p.proposal&&p.proposal.reapprovals&&p.proposal.reapprovals.length>0)},
+    "prop-reapp":    {title:"Proposals with Re-approvals",sub:"These proposals have re-approval quotations",list:proposals.filter(p=>p.proposal&&p.proposal.reapprovals&&p.proposal.reapprovals.length>0)},
     "proj-all":      {title:"All Projects",sub:`${projects.length} total projects`,list:projects},
     "proj-active":   {title:"In Progress Projects",sub:"Currently active projects",list:projects.filter(p=>projStatus(p)==="active")},
     "proj-done":     {title:"Completed Projects",sub:"All completed projects",list:projects.filter(p=>projStatus(p)==="done")},
@@ -563,7 +760,7 @@ function openAdminPopupById(id){
 function openAdminPopupByType(field,val){
   const all=Object.values(ALL_PROJECTS);
   const proposals=all.filter(p=>p.workflowStatus==="proposal"||p.workflowStatus==="allocated");
-  showAdminPopup(val+" Proposals","Proposals with this project type",proposals.filter(p=>p.project&&p.project.unitType===val));
+  showAdminPopup(val+" Proposals","Proposals with this project type",proposals.filter(p=>p.project&&natureArr(p.project.unitType).includes(val)));
 }
 function openAdminPopupByCategory(cat){
   const all=Object.values(ALL_PROJECTS);
@@ -578,12 +775,7 @@ function openAdminPopupByCoord(name){
 function openAdminPopupByProjType(t){
   const all=Object.values(ALL_PROJECTS);
   const projects=all.filter(p=>p.workflowStatus!=="proposal"&&p.workflowStatus!=="allocated");
-  showAdminPopup(t+" Projects","",projects.filter(p=>p.project&&p.project.unitType===t));
-}
-function openAdminPopupByProposalStage(stage){
-  const all=Object.values(ALL_PROJECTS);
-  const proposals=all.filter(p=>p.workflowStatus==="proposal"||p.workflowStatus==="allocated");
-  showAdminPopup(stage,"Proposals in this stage",proposals.filter(p=>p.proposal&&p.proposal.proposalStage===stage));
+  showAdminPopup(t+" Projects","",projects.filter(p=>p.project&&natureArr(p.project.unitType).includes(t)));
 }
 
 function render(){
@@ -635,7 +827,6 @@ function render(){
                 <div style="font-size:11px;color:#888;margin-bottom:5px">${esc(pr.client||"—")} · ${esc(pr.location||"—")} · Unit: ${esc(pr.unit||"—")}${pr.coordinator?" · <strong>"+esc(pr.coordinator)+"</strong>":""}</div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap">
                   <span class="status-chip ${cCls}">${cTxt}</span>
-                  ${prop.proposalStage?`<span class="status-chip" style="background:#f0f4ff;color:#2d4a8a">${esc(prop.proposalStage)}</span>`:""}
                   ${prop.quotationNumber?`<span class="status-chip" style="background:#e8f4ff;color:#1a5276">📄 ${esc(prop.quotationNumber)}</span>`:""}
                   ${ptypes.map(t=>`<span class="proj-type-tag">${esc(t)}</span>`).join("")}
                 </div>
@@ -653,91 +844,47 @@ function render(){
   }
   switch(S.mode){
     case"landing":       root.innerHTML=renderLanding()+overlay;break;
-    case"coordLogin":    root.innerHTML=renderLogin("coord")+overlay;break;
-    case"adminLogin":    root.innerHTML=renderLogin("admin")+overlay;break;
-    case"proposalLogin": root.innerHTML=renderLogin("proposal")+overlay;break;
     case"coordName":     root.innerHTML=renderCoordNameStep()+overlay;break;
     case"client":        root.innerHTML=renderClient()+overlay;break;
     case"coord":         root.innerHTML=renderCoord()+overlay;break;
     case"admin":         root.innerHTML=renderAdmin()+overlay;break;
-    case"proposals":     root.innerHTML=renderProposals()+overlay;break;
+ case"proposals":     root.innerHTML=renderProposals()+overlay;break;
     default: root.innerHTML=`<div class="loading"><div class="spinner"></div></div>`+overlay;
+  }
+  if(S.mode==="proposals"){
+    if(S.editingProposalId)renderEditScopeItems();
+    else if(S.proposalTab==="new")renderNewScopeItems();
   }
 }
 
 function renderLanding(){
   return`<div class="landing-hero">
     <div class="landing-brand">Winner Holistic Consultants</div>
-    <div class="landing-title">Project Tracker</div>
-    <div class="landing-sub">Abu Dhabi Municipal Approvals Management</div>
-  </div>
-  <div class="landing-body">
-    <div class="landing-section-label">Select Your Role</div>
-    <button class="role-card" style="background:linear-gradient(135deg,#2d1b69,#4c1d95);border-color:#4c1d95;color:#fff"
-      onclick="S.mode='proposalLogin';S.loginErr='';render()">
-      <div class="role-card-icon" style="background:rgba(255,255,255,0.15)">📋</div>
-      <div>
-        <div class="role-card-title">Proposals Team</div>
-        <div class="role-card-sub">Create projects · Enter scope · Manage quotations</div>
-      </div>
-      <div class="role-card-arrow">→</div>
-    </button>
-    <button class="role-card" style="background:linear-gradient(135deg,#0d2137,#1a3a5c);border-color:#1a3a5c;color:#fff"
-      onclick="S.mode='coordLogin';S.loginErr='';render()">
-      <div class="role-card-icon" style="background:rgba(255,255,255,0.12)">⚙️</div>
-      <div>
-        <div class="role-card-title">Project Coordinator</div>
-        <div class="role-card-sub">Track stages · Update documents · Client updates</div>
-      </div>
-      <div class="role-card-arrow">→</div>
-    </button>
-    <button class="role-card" style="background:linear-gradient(135deg,#064e3b,#065f46);border-color:#065f46;color:#fff"
-      onclick="window.location.href=adminLink()">
-      <div class="role-card-icon" style="background:rgba(255,255,255,0.12)">📊</div>
-      <div>
-        <div class="role-card-title">Admin Dashboard</div>
-        <div class="role-card-sub">Analytics · All projects · Reports</div>
-      </div>
-      <div class="role-card-arrow">→</div>
-    </button>
-    <div style="text-align:center;margin-top:20px;font-size:10px;color:#bbb">
-      Winner Holistic Consultants · Abu Dhabi MEPS Portal · v2.0
-    </div>
-  </div>`;
-}
-
-function renderLogin(type){
-  const isAdmin=type==="admin",isProposal=type==="proposal";
-  const title=isAdmin?"Admin Dashboard":"Coordinator Login";
-  const sub=isAdmin?"Full access · All projects · Analytics":isProposal?"Create projects · Enter scope":"Track stages · Update clients";
-  const pTitle=isProposal?"Proposals Team":title;
-  const bg=isProposal?"linear-gradient(135deg,#2d1b69,#4c1d95)":isAdmin?"linear-gradient(135deg,#064e3b,#065f46)":"linear-gradient(135deg,#0d2137,#1a3a5c)";
-  const accent=isProposal?"#c4b5fd":isAdmin?"#6ee7b7":"#c9a752";
-  return`<div style="background:${bg};padding:28px 20px;color:#fff;text-align:center">
-    <div style="font-size:9px;letter-spacing:2px;color:${accent};text-transform:uppercase;font-weight:600;margin-bottom:8px">Winner Holistic Consultants</div>
-    <div style="font-size:18px;font-weight:700;margin-bottom:4px">${pTitle}</div>
-    <div style="font-size:11px;color:rgba(255,255,255,0.5)">${sub}</div>
+    <div class="landing-title">Projects Management System</div>
+    <div class="landing-sub">Abu Dhabi Municipal Approvals & Internal Project Management</div>
   </div>
   <div class="login-wrap" style="padding-top:28px"><div class="login-box">
     ${S.loginErr?`<div class="err-msg">${esc(S.loginErr)}</div>`:""}
-    <div class="fl" style="margin-bottom:6px">Password</div>
-    <input class="fi" type="password" id="pw" placeholder="Enter password" style="margin-bottom:14px"
-      onkeydown="if(event.key==='Enter')tryLogin('${type}')"/>
-    <button class="btn btn-gold" style="width:100%;padding:11px;font-size:13px" onclick="tryLogin('${type}')">Login →</button>
-    <div style="margin-top:14px;text-align:center">
-      <a href="${window.location.pathname}" style="font-size:12px;color:#aaa;text-decoration:none">← Back to Role Selection</a>
-    </div>
-  </div></div>`;
+    <div class="fl" style="margin-bottom:12px">Enter your password🔑</div>
+    <input class="fi" type="password" id="pw" placeholder="Password" style="margin-bottom:14px"
+      onkeydown="if(event.key==='Enter')tryUnifiedLogin()"/>
+    <button class="btn btn-gold" style="width:100%;padding:11px;font-size:13px" onclick="tryUnifiedLogin()">Login →</button>
+  </div></div>
+  <div style="text-align:center;margin-top:20px;font-size:15px;color:#bbb">
+    Unified Login Portal
+  </div>`;
 }
-function tryLogin(type){
+function tryUnifiedLogin(){
   const v=document.getElementById("pw")?.value||"";
-  const correct=type==="admin"?ADMIN_PW:type==="proposal"?PROPOSAL_PW:COORD_PW;
-  if(v===correct){
-    S.loginErr="";
-    if(type==="admin"){S.authedAdmin=true;loadAll();}
-    else if(type==="proposal"){S.authedProposal=true;loadProposalProjects();}
-    else{S.authedCoord=true;S.mode="coordName";render();}
-  } else{S.loginErr="Incorrect password. Please try again.";render();}
+  if(v===PROPOSAL_PW){
+    S.loginErr="";S.authedProposal=true;loadProposalProjects();
+  } else if(v===COORD_PW){
+    S.loginErr="";S.authedCoord=true;S.mode="coordName";render();
+  } else if(v===ADMIN_PW){
+    S.loginErr="";S.authedAdmin=true;loadAll();
+  } else{
+    S.loginErr="Incorrect password. Please try again.";render();
+  }
 }
 
 function renderCoordNameStep(){
@@ -747,15 +894,12 @@ function renderCoordNameStep(){
     <div style="font-size:11px;color:rgba(255,255,255,0.5)">Enter your name to see your assigned projects</div>
   </div>
   <div class="login-wrap" style="padding-top:28px"><div class="coord-name-box">
-    <div style="font-size:15px;font-weight:600;color:#0d2137;margin-bottom:6px">Who are you?</div>
-    <div style="font-size:12px;color:#888;margin-bottom:18px;line-height:1.6">Your name is used to filter projects assigned to you.</div>
-    <div class="fl">Your Full Name <span class="req-star">*</span></div>
+    <div style="font-size:9px;font-weight:600;color:#0d2137;margin-bottom:6px">Hello</div>
+    <div style="font-size:9px;color:#888;margin-bottom:18px;line-height:1.6">Your name is used to filter projects assigned to you.</div>
+    <div class="fl">Enter your Name <span class="req-star">*</span></div>
     <input class="fi" id="coord-name-input" placeholder="e.g. Ahmed Al Rashidi" style="margin-bottom:14px"
       onkeydown="if(event.key==='Enter')submitCoordName()"/>
     <button class="btn btn-gold" style="width:100%;padding:11px;font-size:13px" onclick="submitCoordName()">Continue to My Projects →</button>
-    <div style="margin-top:12px;text-align:center">
-      <a href="#" style="font-size:12px;color:#aaa;text-decoration:none" onclick="S.mode='coordLogin';S.loginErr='';render();return false;">← Back to Login</a>
-    </div>
   </div></div>`;
 }
 async function submitCoordName(){
@@ -767,23 +911,17 @@ async function submitCoordName(){
   S.mode="coord";S.tab="list";render();
 }
 
-// ── PROPOSALS VIEW ────────────────────────────────────────────
 function renderProposals(){
+  if(S.editingProposalId)return renderEditProposalScope();
   const allProjs=Object.values(ALL_PROJECTS);
   const myProposals=allProjs.filter(p=>p.workflowStatus==="proposal"||p.workflowStatus==="allocated");
   const tab=S.proposalTab||"new";
 
-  // If editing a proposal, show edit form
-  if(S.editingProposalId){
-    return renderProposalEditForm();
-  }
-
   let h=`<div class="pbar-header">
-    <div class="pbar-label">📋 Proposals Team</div>
+    <div class="pbar-label">📋 Proposals Module</div>
     <div style="display:flex;gap:7px;align-items:center">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#c4b5fd;border:1px solid rgba(255,255,255,0.2)"
-        onclick="S.proposalTab='new';_newReapprovals=[];render()">+ New Project</button>
-      <button class="btn btn-sm" style="background:rgba(255,255,255,0.1);color:#c4b5fd"
+onclick="S.proposalTab='new';_newReapprovals=[];_newScopeItems=[];render()"      <button class="btn btn-sm" style="background:rgba(255,255,255,0.1);color:#c4b5fd"
         onclick="S.proposalTab='list';render()">Submitted (${myProposals.length})</button>
     </div>
   </div>
@@ -796,363 +934,202 @@ function renderProposals(){
   <div class="body">`;
 
   if(tab==="new"){
-    h+=renderNewProposalForm();
-  } else {
-    h+=renderSubmittedProposals(myProposals);
-  }
-  h+=`</div><div class="footer">Winner Holistic Consultants · Proposals Team · <a href="${window.location.pathname}" style="color:#888">Back</a></div>`;
-  return h;
-}
-function toggleProjTypeNew(i){
-  const cb=document.getElementById("projtype-"+i);
-  const opt=document.getElementById("projtype-opt-"+i);
-  if(cb&&opt)opt.classList.toggle("selected",cb.checked);
-}
-function renderNewProposalForm(){
-  return`<div class="sbox">
-    <div class="sbox-title">Project Details</div>
-    <div class="fgrid">
-      <div class="ff"><div class="fl">Project Folder <span class="req-star">*</span></div>
-  <input class="fi" id="pp-title" placeholder="e.g. Marina Mall – Shop No. 42"/></div>
-
-      <div><div class="fl">Client Name <span class="req-star">*</span></div>
-        <input class="fi" id="pp-client" placeholder="e.g. Al Baraka Trading LLC"/></div>
-      <div><div class="fl">Unit / Shop No. <span class="req-star">*</span></div>
-        <input class="fi" id="pp-unit" placeholder="e.g. G-42"/></div>
-      <div class="ff"><div class="fl">Location / Mall <span class="req-star">*</span></div>
-        <input class="fi" id="pp-location" placeholder="e.g. Marina Mall, Abu Dhabi"/></div>
-      <div class="ff"><div class="fl">Project Type <span class="req-star">*</span>
-  <span style="font-size:10px;color:#888;font-weight:400;margin-left:6px">(select all that apply)</span>
-</div>
-<div class="proj-type-grid">
-  ${PROJECT_TYPES_NEW.map((t,i)=>`
-    <label class="proj-type-option" id="projtype-opt-${i}">
-      <input type="checkbox" id="projtype-${i}" value="${t}" onchange="toggleProjTypeNew(${i})"/>
-      <span class="proj-type-label">${t}</span>
-    </label>`).join("")}
-</div></div>
-<div class="ff"><div class="fl">Project Folder Category <span class="req-star">*</span></div>
-  <select class="fi" id="pp-folder">
-    <option value="">— Select Folder —</option>
-    <option value="Fitout Folder">Fitout Folder</option>
-    <option value="Live Folder">Live Folder</option>
-    <option value="ID Folder">ID Folder</option>
-    <option value="Private Folder">Private Folder</option>
-  </select></div>
-  <div class="ff"><div class="fl">Expected Project Start Date <span class="req-star">*</span></div>
-        <input class="fi" type="date" id="pp-start"/></div>
-      <div class="ff"><div class="fl">Proposal Stage <span class="req-star">*</span></div>
-        <select class="fi" id="pp-proposal-stage" onchange="toggleProposalStageCoord()">
-          ${PROPOSAL_STAGES.map(s=>`<option value="${s}">${s}</option>`).join("")}
-        </select></div>
-      <div class="ff" id="pp-coord-row" style="opacity:0.4">
-        <div class="fl">Assign to Coordinator</div>
-        <input class="fi" id="pp-coord" placeholder="Coordinator name" disabled/>
-      </div>
-      <div><div class="fl">Submitted By <span class="req-star">*</span></div>
-        <input class="fi" id="pp-by" placeholder="Your name"/></div>
-    </div>
-    
-  </div>
-  <div class="quot-box">
-    <div class="quot-box-title">💼 Main Quotation</div>
-    <div class="fgrid">
-      <div><div class="fl">Quotation Number <span class="req-star">*</span></div>
-        <input class="fi" id="pp-quot-num" placeholder="e.g. WHC-2026-042"/></div>
-      <div><div class="fl">Quotation Value (AED) <span class="req-star">*</span></div>
-        <input class="fi" type="number" id="pp-quot-val" placeholder="e.g. 85000"/></div>
-    </div>
-  </div>
-  <div class="sbox">
-    <div class="sbox-title">Scope of Work <span class="req-star">*</span></div>
-    <div class="rte-wrap">${rteToolbar("pp-scope-editor")}</div>
-  </div>
-  <div class="reapp-box">
-    <div class="reapp-box-title">🔄 Re-approval Quotations
-      <span style="font-size:10px;font-weight:400;color:#c08060">Add if any re-approvals are needed</span>
-    </div>
-    <div id="pp-reapp-list"></div>
-    <button class="btn btn-sm" style="background:#fde8d8;color:#a04800;border:1px solid #e8a060;margin-top:4px"
-      onclick="addNewReapprovalEntry()">+ Add Re-approval Quotation</button>
-  </div>
-  <button class="btn btn-purple" style="width:100%;margin-top:4px;padding:12px;font-size:13px"
-    onclick="submitProposal()">Submit Project to Coordinator →</button>`;
-}
-
-function renderSubmittedProposals(myProposals){
-  const coords=[...new Set(myProposals.map(p=>p.project&&p.project.coordinator).filter(Boolean))].sort();
-  let h=`<div class="prop-filters">
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Coordinator</div>
-      <select class="prop-filter-input" onchange="S.propFilterCoord=this.value;render()">
-        <option value="">All Coordinators</option>
-        ${coords.map(c=>`<option value="${c}" ${S.propFilterCoord===c?"selected":""}>${esc(c)}</option>`).join("")}
-      </select>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Project Type</div>
-      <select class="prop-filter-input" onchange="S.propFilterProjType=this.value;render()">
-        <option value="all">All Types</option>
-        ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}" ${S.propFilterProjType===t?"selected":""}>${t}</option>`).join("")}
-      </select>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Proposal Stage</div>
-      <select class="prop-filter-input" onchange="S.propFilterProposalStage=this.value;render()">
-        <option value="all">All Stages</option>
-        ${PROPOSAL_STAGES.map(s=>`<option value="${s}" ${S.propFilterProposalStage===s?"selected":""}>${s}</option>`).join("")}
-      </select>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Date From</div>
-      <input type="date" class="prop-filter-input" value="${S.propFilterDateFrom||""}" onchange="S.propFilterDateFrom=this.value;render()"/>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Date To</div>
-      <input type="date" class="prop-filter-input" value="${S.propFilterDateTo||""}" onchange="S.propFilterDateTo=this.value;render()"/>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Client Name</div>
-      <input class="prop-filter-input" placeholder="Search client..." value="${S.propFilterClient||""}" oninput="S.propFilterClient=this.value;render()"/>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Quotation No.</div>
-      <input class="prop-filter-input" placeholder="e.g. WHC-2026-042" value="${S.propFilterQuot||""}" oninput="S.propFilterQuot=this.value;render()"/>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Min Value (AED)</div>
-      <input type="number" class="prop-filter-input" placeholder="e.g. 50000" value="${S.propFilterValue||""}" oninput="S.propFilterValue=this.value;render()"/>
-    </div>
-    <div class="prop-filter-item">
-      <div class="prop-filter-label">Re-approvals</div>
-      <select class="prop-filter-input" onchange="S.propFilterReapp=this.value;render()">
-        <option value="all">All</option>
-        <option value="yes" ${S.propFilterReapp==="yes"?"selected":""}>Has Re-approvals</option>
-        <option value="no" ${S.propFilterReapp==="no"?"selected":""}>No Re-approvals</option>
-      </select>
-    </div>
-  </div>`;
-
-  let filtered=myProposals.filter(p=>{
-    const pr=p.project||{},prop=p.proposal||{};
-    if(S.propFilterCoord&&pr.coordinator!==S.propFilterCoord)return false;
-    if(S.propFilterProjType!=="all"&&pr.unitType!==S.propFilterProjType)return false;
-    if(S.propFilterProposalStage!=="all"&&prop.proposalStage!==S.propFilterProposalStage)return false;
-    if(S.propFilterDateFrom&&(p.createdAt||"")<S.propFilterDateFrom)return false;
-    if(S.propFilterDateTo&&(p.createdAt||"")>S.propFilterDateTo)return false;
-    if(S.propFilterClient&&!(pr.client||"").toLowerCase().includes(S.propFilterClient.toLowerCase()))return false;
-    if(S.propFilterQuot&&!(prop.quotationNumber||"").toLowerCase().includes(S.propFilterQuot.toLowerCase()))return false;
-    if(S.propFilterValue&&parseFloat(prop.estimatedValue||0)<parseFloat(S.propFilterValue))return false;
-    if(S.propFilterReapp==="yes"&&(!prop.reapprovals||!prop.reapprovals.length))return false;
-    if(S.propFilterReapp==="no"&&prop.reapprovals&&prop.reapprovals.length>0)return false;
-    return true;
-  }).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
-
-  h+=`<div style="font-size:12px;color:#888;margin-bottom:8px">Showing ${filtered.length} of ${myProposals.length} proposals</div>`;
-
-  if(!filtered.length){
-    h+=`<div style="text-align:center;padding:30px;color:#aaa;font-size:13px">No proposals match the selected filters.</div>`;
-  } else {
-    filtered.forEach(p=>{
-      const pr=p.project||{},prop=p.proposal||{};
-      const ws=p.workflowStatus;
-      const wsCls=ws==="allocated"?"chip-allocated":"chip-proposal";
-      const wsTxt=ws==="allocated"?"Allocated to Coordinator":"Pending Allocation";
-      const reapps=prop.reapprovals||[];
-      const ptypes=prop.projectTypes||[];
-      const plog=p.proposalLog||[];
-      const pStage=prop.proposalStage||"";
-      h+=`<div class="prop-card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
-          <div style="flex:1">
-            <div class="prop-card-title">${esc(pr.title||"Unnamed")}</div>
-            <div class="prop-card-meta">${esc(pr.client||"—")} · ${esc(pr.location||"—")} · Unit: ${esc(pr.unit||"—")}</div>
-            <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap">
-              <span class="status-chip ${wsCls}">${wsTxt}</span>
-              ${pr.coordinator?`<span class="status-chip chip-allocated">👤 ${esc(pr.coordinator)}</span>`:""}
-              ${pStage?`<span class="status-chip" style="background:#f0f4ff;color:#2d4a8a">📌 ${esc(pStage)}</span>`:""}
-              <span class="status-chip chip-new">${esc(p.createdAt||"")}</span>
-              ${prop.quotationNumber?`<span class="status-chip" style="background:#e8f4ff;color:#1a5276">📄 ${esc(prop.quotationNumber)}</span>`:""}
-              ${prop.estimatedValue?`<span class="status-chip" style="background:#f0fdf4;color:#166a3f">AED ${esc(prop.estimatedValue)}</span>`:""}
-              <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(pr.unitType||"")}</span>
-            </div>
-            ${ptypes.length?`<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">${ptypes.map(t=>`<span class="proj-type-tag">${esc(t)}</span>`).join("")}</div>`:""}
-          </div>
-        </div>
-        ${prop.scopeHtml?`<div class="prop-scope-preview">${prop.scopeHtml}</div>`:""}
-        ${reapps.length?`<div style="margin-top:8px;padding:8px 10px;background:#fdf0e6;border-radius:8px;border:1px solid #e8c090">
-          <div style="font-size:10px;font-weight:700;color:#a04800;margin-bottom:5px">🔄 ${reapps.length} Re-approval(s)</div>
-          ${reapps.map((r,ri)=>`<div style="font-size:11px;color:#555;padding:3px 0;border-bottom:1px solid #f5ddc0">
-            <strong>${ri+1}. ${esc(r.title||"Re-approval")}</strong>
-            ${r.quotationNumber?` · 📄 ${esc(r.quotationNumber)}`:""}
-            ${r.value?` · AED ${esc(r.value)}`:""}
-          </div>`).join("")}
-        </div>`:""}
-        ${plog.length?`<div style="margin-top:8px;padding:8px 10px;background:#f7f7f7;border-radius:8px;border:1px solid #eee">
-          <div style="font-size:10px;font-weight:700;color:#666;margin-bottom:5px">📝 Activity (${plog.length} entries)</div>
-          ${plog.slice(-3).reverse().map(l=>`<div class="prop-act-row">
-            <div class="prop-act-dot"></div>
-            <div class="prop-act-body"><strong>${esc(l.by)}</strong> — ${esc(l.action)}${l.detail?" · "+esc(l.detail):""}</div>
-            <div class="prop-act-time">${fmtDateTime(l.at)}</div>
-          </div>`).join("")}
-        </div>`:""}
-        <div class="prop-card-btns">
-          <button class="btn btn-sm btn-purple" onclick="startEditProposal('${p.id}')">Edit Scope &amp; Quotations</button>
-          ${ws==="proposal"?`<button class="btn btn-sm btn-gold" onclick="allocateProposal('${p.id}')">Mark as Allocated</button>`:""}
-        </div>
-      </div>`;
-    });
-  }
-  return h;
-}
-
-// ── Proposal Edit Form (pre-filled, in proposals tab) ─────────
-async function startEditProposal(id){
-  document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Loading...</div></div>`;
-  const data=await fbGet("projects/"+id);
-  if(data){
-    PROJ=migrateProject(data);
-    S.editingProposalId=id;
-    S.mode="proposals";
-    render();
-    // init RTE editors after render
-    rteInit("ep-scope-editor",PROJ.proposal.scopeHtml||"");
-    (PROJ.proposal.reapprovals||[]).forEach((_,ri)=>{
-      rteInit("ep-reapp-editor-"+ri,(PROJ.proposal.reapprovals[ri].scopeHtml)||"");
-    });
-  }
-}
-
-function renderProposalEditForm(){
-  if(!PROJ)return"";
-  const prop=PROJ.proposal||{};
-  const pr=PROJ.project||{};
-  const reapps=prop.reapprovals||[];
-  const ptypes=prop.projectTypes||[];
-  const pStage=prop.proposalStage||"Project not yet assigned";
-  const coordEnabled=pStage==="Project assigned";
-
-  let h=`<div class="pbar-header">
-    <div class="pbar-label">📋 Proposals Team — Editing Project</div>
-    <button class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#c4b5fd;border:1px solid rgba(255,255,255,0.2)"
-      onclick="S.editingProposalId=null;PROJ=null;S.proposalTab='list';render()">← Back to Proposals</button>
-  </div>
-  <div class="body">
-  <div class="prop-edit-wrap">
-    <div class="prop-edit-title">✏️ Editing: ${esc(pr.title||"Unnamed Project")}</div>
-
-    <div class="sbox">
+      h+=`<div class="sbox">
       <div class="sbox-title">Project Details</div>
       <div class="fgrid">
         <div class="ff"><div class="fl">Project Folder <span class="req-star">*</span></div>
-          <input class="fi" id="ep-title" value="${esc(pr.title||"")}" oninput="PROJ.project.title=this.value"/></div>
+          <input class="fi" id="pp-title" placeholder="e.g. Marina Mall – Shop No. 42"/></div>
         <div><div class="fl">Client Name <span class="req-star">*</span></div>
-          <input class="fi" id="ep-client" value="${esc(pr.client||"")}" oninput="PROJ.project.client=this.value"/></div>
+          <input class="fi" id="pp-client" placeholder="e.g. Al Baraka Trading LLC"/></div>
         <div><div class="fl">Unit / Shop No. <span class="req-star">*</span></div>
-          <input class="fi" id="ep-unit" value="${esc(pr.unit||"")}" oninput="PROJ.project.unit=this.value"/></div>
+          <input class="fi" id="pp-unit" placeholder="e.g. G-42"/></div>
         <div class="ff"><div class="fl">Location / Mall <span class="req-star">*</span></div>
-          <input class="fi" id="ep-location" value="${esc(pr.location||"")}" oninput="PROJ.project.location=this.value"/></div>
-        <div><div class="fl">Project Type <span class="req-star">*</span></div>
-          <select class="fi" id="ep-unit-type" onchange="PROJ.project.unitType=this.value">
-            ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}" ${pr.unitType===t?"selected":""}>${t}</option>`).join("")}
-          </select></div>
-        <div><div class="fl">Expected Start Date</div>
-          <input class="fi" type="date" value="${esc(prop.expectedStartDate||"")}" oninput="PROJ.proposal.expectedStartDate=this.value"/></div>
-        <div class="ff"><div class="fl">Proposal Stage <span class="req-star">*</span></div>
-          <select class="fi" id="ep-proposal-stage" onchange="PROJ.proposal.proposalStage=this.value;toggleEditProposalStageCoord()">
-            ${PROPOSAL_STAGES.map(s=>`<option value="${s}" ${pStage===s?"selected":""}>${s}</option>`).join("")}
-          </select></div>
-        <div class="ff" id="ep-coord-row" style="opacity:${coordEnabled?"1":"0.4"}">
-          <div class="fl">Assign to Coordinator</div>
-          <input class="fi" id="ep-coord" value="${esc(pr.coordinator||"")}" oninput="PROJ.project.coordinator=this.value" placeholder="Coordinator name" ${coordEnabled?"":"disabled"}/>
+          <input class="fi" id="pp-location" placeholder="e.g. Marina Mall, Abu Dhabi"/></div>
+        <div class="ff"><div class="fl" style="margin-bottom:6px">Nature of the Project <span class="req-star">*</span>
+          <span style="font-size:10px;color:#888;font-weight:400;margin-left:6px">(select all that apply)</span>
         </div>
-        <div><div class="fl">Submitted By</div>
-          <input class="fi" value="${esc(prop.submittedBy||"")}" oninput="PROJ.proposal.submittedBy=this.value" placeholder="Your name"/></div>
+        <div class="proj-type-grid">
+          ${PROJECT_TYPES_NEW.map((t,i)=>`
+            <label class="proj-type-option" id="nature-opt-${i}">
+              <input type="checkbox" id="nature-${i}" value="${t}" onchange="toggleNatureStyle(${i})"/>
+              <span class="proj-type-label">${t}</span>
+            </label>`).join("")}
+        </div>
+        </div>
+        <div><div class="fl">Expected Start Date</div>
+          <input class="fi" type="date" id="pp-start"/></div>
+        <div><div class="fl">Assign to Coordinator <span class="req-star">*</span></div>
+          <input class="fi" id="pp-coord" placeholder="Coordinator name"/></div>
+        <div><div class="fl">Submitted By <span class="req-star">*</span></div>
+          <input class="fi" id="pp-by" placeholder="Your name"/></div>
       </div>
-      
+      <div style="margin-top:12px">
+        <div class="fl" style="margin-bottom:6px">Project Folder Category <span class="req-star">*</span></div>
+        <select class="fi" id="pp-folder-category">
+          <option value="">— Select Folder Category —</option>
+          ${FOLDER_CATEGORIES.map(t=>`<option value="${t}">${t}</option>`).join("")}
+        </select>
+      </div>
     </div>
-
     <div class="quot-box">
       <div class="quot-box-title">💼 Main Quotation</div>
       <div class="fgrid">
         <div><div class="fl">Quotation Number <span class="req-star">*</span></div>
-          <input class="fi" value="${esc(prop.quotationNumber||"")}" oninput="PROJ.proposal.quotationNumber=this.value" placeholder="e.g. WHC-2026-042"/></div>
+          <input class="fi" id="pp-quot-num" placeholder="e.g. WHC-2026-042"/></div>
         <div><div class="fl">Quotation Value (AED) <span class="req-star">*</span></div>
-          <input class="fi" type="number" value="${esc(prop.estimatedValue||"")}" oninput="PROJ.proposal.estimatedValue=this.value" placeholder="e.g. 85000"/></div>
+          <input class="fi" type="number" id="pp-quot-val" placeholder="e.g. 85000"/></div>
       </div>
     </div>
-
     <div class="sbox">
-      <div class="sbox-title">Scope of Work <span class="req-star">*</span></div>
-      <div class="rte-wrap">${rteToolbar("ep-scope-editor")}</div>
+    <div class="sbox-title">Scope of Works <span class="req-star">*</span></div>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <div class="fl">Load Template</div>        <select class="fi" id="pp-scope-template" onchange="loadScopeTemplateNew()">
+          <option value="">— Select Template —</option>
+          ${Object.entries(SCOPE_TEMPLATES).map(([k,t])=>`<option value="${k}">${esc(t.label)}</option>`).join("")}
+        </select>
+      </div>
+  <button class="btn btn-sm" style="background:#fff8e6;color:#a06b00;border:1px solid #e8c96a"
+        onclick="addNewScopeItem()">+ Add Item</button>
     </div>
-
+    <div id="pp-scope-items"></div>
+  </div>
+  <div class="sbox">
+    <div class="sbox-title">Additional Notes / Scope Description</div>
+    <div class="rte-wrap">${rteToolbar("pp-scope-editor")}</div>
+  </div>
     <div class="reapp-box">
-      <div class="reapp-box-title">🔄 Re-approval Quotations</div>
-      ${reapps.map((r,ri)=>`<div class="reapp-entry">
-        <div class="reapp-entry-num">RE-APPROVAL #${ri+1}</div>
-        <div class="fgrid" style="margin-bottom:8px">
-          <div class="ff"><div class="fl">Title</div>
-            <input class="fi" value="${esc(r.title||"")}" oninput="PROJ.proposal.reapprovals[${ri}].title=this.value"/></div>
-          <div><div class="fl">Quotation Number</div>
-            <input class="fi" value="${esc(r.quotationNumber||"")}" oninput="PROJ.proposal.reapprovals[${ri}].quotationNumber=this.value"/></div>
-          <div><div class="fl">Value (AED)</div>
-            <input class="fi" type="number" value="${esc(r.value||"")}" oninput="PROJ.proposal.reapprovals[${ri}].value=this.value"/></div>
-        </div>
-        <div class="fl" style="margin-bottom:5px">Re-approval Scope</div>
-        <div class="rte-wrap">${rteToolbar("ep-reapp-editor-"+ri)}</div>
-        <button class="btn btn-sm btn-red" style="margin-top:7px"
-          onclick="PROJ.proposal.reapprovals.splice(${ri},1);render();rteInit('ep-scope-editor',PROJ.proposal.scopeHtml||'')">✕ Remove</button>
-      </div>`).join("")}
+      <div class="reapp-box-title">🔄 Re-approval Quotations
+        <span style="font-size:10px;font-weight:400;color:#c08060">Add if any re-approvals are needed</span>
+      </div>
+      <div id="pp-reapp-list"></div>
       <button class="btn btn-sm" style="background:#fde8d8;color:#a04800;border:1px solid #e8a060;margin-top:4px"
-        onclick="addEditReapproval()">+ Add Re-approval Quotation</button>
+        onclick="addNewReapprovalEntry()">+ Add Re-approval Quotation</button>
     </div>
+    <button class="btn btn-purple" style="width:100%;margin-top:4px;padding:12px;font-size:13px"
+      onclick="submitProposal()">Submit Project to Coordinator →</button>`;
+    rteInit("pp-scope-editor","");
 
-    <div style="display:flex;gap:10px;margin-top:8px">
-      <button class="btn btn-purple" style="flex:1;padding:12px;font-size:13px" onclick="saveEditedProposal()">Save Changes</button>
-      <button class="btn" style="background:#f0f0f0;color:#666;padding:12px 20px;font-size:13px"
-        onclick="S.editingProposalId=null;PROJ=null;S.proposalTab='list';render()">Cancel</button>
-    </div>
-  </div>
-  </div>
-  <div class="footer">Winner Holistic Consultants · Proposals Team · <a href="${window.location.pathname}" style="color:#888">Back</a></div>`;
-  return h;
-}
+  } else {
+    const coords=[...new Set(myProposals.map(p=>p.project&&p.project.coordinator).filter(Boolean))].sort();
+    h+=`<div class="prop-filters">
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Coordinator</div>
+        <select class="prop-filter-input" onchange="S.propFilterCoord=this.value;render()">
+          <option value="">All Coordinators</option>
+          ${coords.map(c=>`<option value="${c}" ${S.propFilterCoord===c?"selected":""}>${esc(c)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Nature of the Project</div>
+        <select class="prop-filter-input" onchange="S.propFilterProjType=this.value;render()">
+          <option value="all">All Natures</option>
+          ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}" ${S.propFilterProjType===t?"selected":""}>${t}</option>`).join("")}
+        </select>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Date From</div>
+        <input type="date" class="prop-filter-input" value="${S.propFilterDateFrom||""}" onchange="S.propFilterDateFrom=this.value;render()"/>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Date To</div>
+        <input type="date" class="prop-filter-input" value="${S.propFilterDateTo||""}" onchange="S.propFilterDateTo=this.value;render()"/>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Client Name</div>
+        <input class="prop-filter-input" placeholder="Search client..." value="${S.propFilterClient||""}" oninput="S.propFilterClient=this.value;render()"/>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Quotation No.</div>
+        <input class="prop-filter-input" placeholder="e.g. WHC-2026-042" value="${S.propFilterQuot||""}" oninput="S.propFilterQuot=this.value;render()"/>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Min Value (AED)</div>
+        <input type="number" class="prop-filter-input" placeholder="e.g. 50000" value="${S.propFilterValue||""}" oninput="S.propFilterValue=this.value;render()"/>
+      </div>
+      <div class="prop-filter-item">
+        <div class="prop-filter-label">Re-approvals</div>
+        <select class="prop-filter-input" onchange="S.propFilterReapp=this.value;render()">
+          <option value="all">All</option>
+          <option value="yes" ${S.propFilterReapp==="yes"?"selected":""}>Has Re-approvals</option>
+          <option value="no" ${S.propFilterReapp==="no"?"selected":""}>No Re-approvals</option>
+        </select>
+      </div>
+    </div>`;
 
+    let filtered=myProposals.filter(p=>{
+      const pr=p.project||{},prop=p.proposal||{};
+      if(S.propFilterCoord&&pr.coordinator!==S.propFilterCoord)return false;
+      if(S.propFilterProjType!=="all"&&!natureArr(pr.unitType).includes(S.propFilterProjType))return false;
+      if(S.propFilterDateFrom&&(p.createdAt||"")<S.propFilterDateFrom)return false;
+      if(S.propFilterDateTo&&(p.createdAt||"")>S.propFilterDateTo)return false;
+      if(S.propFilterClient&&!(pr.client||"").toLowerCase().includes(S.propFilterClient.toLowerCase()))return false;
+      if(S.propFilterQuot&&!(prop.quotationNumber||"").toLowerCase().includes(S.propFilterQuot.toLowerCase()))return false;
+      if(S.propFilterValue&&parseFloat(prop.estimatedValue||0)<parseFloat(S.propFilterValue))return false;
+      if(S.propFilterReapp==="yes"&&(!prop.reapprovals||!prop.reapprovals.length))return false;
+      if(S.propFilterReapp==="no"&&prop.reapprovals&&prop.reapprovals.length>0)return false;
+      return true;
+    }).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
 
-function addEditReapproval(){
-  if(!PROJ.proposal.reapprovals)PROJ.proposal.reapprovals=[];
-  PROJ.proposal.reapprovals.push({title:"",quotationNumber:"",value:"",scopeHtml:""});
-  render();
-  rteInit("ep-scope-editor",PROJ.proposal.scopeHtml||"");
-  (PROJ.proposal.reapprovals||[]).forEach((_,ri)=>{
-    rteInit("ep-reapp-editor-"+ri,(PROJ.proposal.reapprovals[ri].scopeHtml)||"");
-  });
-}
-async function saveEditedProposal(){
-  if(!PROJ)return;
-  // Sync scope RTEs
-  const scopeEl=document.getElementById("ep-scope-editor");
-  if(scopeEl)PROJ.proposal.scopeHtml=scopeEl.innerHTML;
-  (PROJ.proposal.reapprovals||[]).forEach((_,ri)=>{
-    const ed=document.getElementById("ep-reapp-editor-"+ri);
-    if(ed)PROJ.proposal.reapprovals[ri].scopeHtml=ed.innerHTML;
-  });
-  // Log the edit
-  if(!PROJ.proposalLog)PROJ.proposalLog=[];
-  PROJ.proposalLog.push({action:"Scope & Quotations Updated",by:PROJ.proposal.submittedBy||"Proposals Team",detail:`Quot: ${PROJ.proposal.quotationNumber}`,at:new Date().toISOString()});
-  document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Saving changes...</div></div>`;
-  const ok=await fbSet("projects/"+PROJ.id,PROJ);
-  if(ok){
-    ALL_PROJECTS[PROJ.id]=JSON.parse(JSON.stringify(PROJ));
-    S.editingProposalId=null;
-    S.proposalTab="list";
-    PROJ=null;
-    render();
-  } else{
-    alert("Error saving. Please try again.");
-    render();
+    h+=`<div style="font-size:12px;color:#888;margin-bottom:8px">Showing ${filtered.length} of ${myProposals.length} proposals</div>`;
+
+    if(!filtered.length){
+      h+=`<div style="text-align:center;padding:30px;color:#aaa;font-size:13px">No proposals match the selected filters.</div>`;
+    } else {
+      filtered.forEach(p=>{
+        const pr=p.project||{},prop=p.proposal||{};
+        const ws=p.workflowStatus;
+        const wsCls=ws==="allocated"?"chip-allocated":"chip-proposal";
+        const wsTxt=ws==="allocated"?"Allocated to Coordinator":"Pending Allocation";
+        const reapps=prop.reapprovals||[];
+        const ptypes=prop.projectTypes||[];
+        const plog=p.proposalLog||[];
+        h+=`<div class="prop-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px">
+            <div style="flex:1">
+              <div class="prop-card-title">${esc(pr.title||"Unnamed")}</div>
+              <div class="prop-card-meta">${esc(pr.client||"—")} · ${esc(pr.location||"—")} · Unit: ${esc(pr.unit||"—")}</div>
+              <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap">
+                <span class="status-chip ${wsCls}">${wsTxt}</span>
+                ${pr.coordinator?`<span class="status-chip chip-allocated">👤 ${esc(pr.coordinator)}</span>`:""}
+                <span class="status-chip chip-new">${esc(p.createdAt||"")}</span>
+                ${prop.quotationNumber?`<span class="status-chip" style="background:#e8f4ff;color:#1a5276">📄 ${esc(prop.quotationNumber)}</span>`:""}
+                ${prop.estimatedValue?`<span class="status-chip" style="background:#f0fdf4;color:#166a3f">AED ${esc(prop.estimatedValue)}</span>`:""}
+                <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(natureDisplay(pr.unitType))}</span>
+              </div>
+              ${ptypes.length?`<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">${ptypes.map(t=>`<span class="proj-type-tag">${esc(t)}</span>`).join("")}</div>`:""}
+            </div>
+          </div>
+          ${prop.scopeHtml?`<div class="prop-scope-preview">${prop.scopeHtml}</div>`:""}
+          ${reapps.length?`<div style="margin-top:8px;padding:8px 10px;background:#fdf0e6;border-radius:8px;border:1px solid #e8c090">
+            <div style="font-size:10px;font-weight:700;color:#a04800;margin-bottom:5px">🔄 ${reapps.length} Re-approval(s)</div>
+            ${reapps.map((r,ri)=>`<div style="font-size:11px;color:#555;padding:3px 0;border-bottom:1px solid #f5ddc0">
+              <strong>${ri+1}. ${esc(r.title||"Re-approval")}</strong>
+              ${r.quotationNumber?` · 📄 ${esc(r.quotationNumber)}`:""}
+              ${r.value?` · AED ${esc(r.value)}`:""}
+            </div>`).join("")}
+          </div>`:""}
+          ${plog.length?`<div style="margin-top:8px;padding:8px 10px;background:#f7f7f7;border-radius:8px;border:1px solid #eee">
+            <div style="font-size:10px;font-weight:700;color:#666;margin-bottom:5px">📝 Activity (${plog.length} entries)</div>
+            ${plog.slice(-3).reverse().map(l=>`<div class="prop-act-row">
+              <div class="prop-act-dot"></div>
+              <div class="prop-act-body"><strong>${esc(l.by)}</strong> — ${esc(l.action)}${l.detail?" · "+esc(l.detail):""}</div>
+              <div class="prop-act-time">${fmtDateTime(l.at)}</div>
+            </div>`).join("")}
+          </div>`:""}
+          <div class="prop-card-btns">
+            <button class="btn btn-sm btn-purple" onclick="editProposalScope('${p.id}')">Edit Scope & Quotations</button>
+            ${ws==="proposal"?`<button class="btn btn-sm btn-gold" onclick="allocateProposal('${p.id}')">Mark as Allocated</button>`:""}
+            <button class="btn btn-sm" style="background:#e8f4ff;color:#1a5276;border:1px solid #b3d4f0" onclick="duplicateProposal('${p.id}')">⧉ Duplicate</button>
+            <button class="btn btn-sm" style="background:#f0f0f0;color:#444;border:1px solid #ddd" onclick="exportProposalPDF('${p.id}')">⬇ Export PDF</button>
+            <button class="btn btn-sm btn-red" onclick="deleteProposal('${p.id}')">🗑 Delete</button>
+          </div>
+        </div>`;
+      });
+    }
   }
+  h+=`</div><div class="footer">Winner Holistic Consultants · Proposals Module · <a href="${window.location.pathname}" style="color:#888">Back</a></div>`;
+  return h;
 }
 
 async function submitProposal(){
@@ -1160,40 +1137,40 @@ async function submitProposal(){
   const client=(document.getElementById("pp-client")?.value||"").trim();
   const unit=(document.getElementById("pp-unit")?.value||"").trim();
   const location=(document.getElementById("pp-location")?.value||"").trim();
-  const pStage=document.getElementById("pp-proposal-stage")?.value||"Project not yet assigned";
-  const coord=pStage==="Project assigned"?(document.getElementById("pp-coord")?.value||"").trim():"";
+  const coord=(document.getElementById("pp-coord")?.value||"").trim();
   const by=(document.getElementById("pp-by")?.value||"").trim();
-  const unitType=PROJECT_TYPES_NEW.filter((_,i)=>document.getElementById("projtype-"+i)?.checked).join(", ")||"Retail";
+  const unitType=PROJECT_TYPES_NEW.filter((_,i)=>document.getElementById("nature-"+i)?.checked);
   const startDate=(document.getElementById("pp-start")?.value||"").trim();
   const quotNum=(document.getElementById("pp-quot-num")?.value||"").trim();
   const quotVal=(document.getElementById("pp-quot-val")?.value||"").trim();
   const scopeEl=document.getElementById("pp-scope-editor");
   const scopeHtml=scopeEl?scopeEl.innerHTML:"";
-  const scopeText=scopeEl?scopeEl.innerText.trim():"";
-  const folder=document.getElementById("pp-folder")?.value||"";
+  const folderCat=document.getElementById("pp-folder-category")?.value||"";
   const finalReapprovals=_newReapprovals.map((r,i)=>{
     const ed=document.getElementById("new-reapp-editor-"+i);
     return{...r,scopeHtml:ed?ed.innerHTML:r.scopeHtml||""};
   });
-if(!title||!client||!unit||!location||!coord||!by||!scopeText){alert("Please fill in all required fields including Scope of Work.");return;}
-if(!folder){alert("Please select a Project Folder Category.");return;}  if(!quotNum||!quotVal){alert("Please enter the main Quotation Number and Value.");return;}
-  
-  if(pStage==="Project assigned"&&!coord){alert("Please enter the Coordinator name when 'Project assigned' is selected.");return;}
+  if(!title||!client||!unit||!location||!coord||!by){alert("Please fill in all required fields.");return;}
+  if(!_newScopeItems.length){alert("Please add at least one Scope of Works item (or load a template).");return;}
+  if(!folderCat){alert("Please select a Project Folder Category.");return;}
+  if(!unitType.length){alert("Please select at least one Nature of the Project.");return;}
+  if(!quotNum||!quotVal){alert("Please enter the main Quotation Number and Value.");return;}
   document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Submitting project...</div></div>`;
   const p=newProj(title);
   p.project.client=client;p.project.unit=unit;p.project.location=location;
   p.project.unitType=unitType;p.project.coordinator=coord;
-  p.proposal.scopeHtml=scopeHtml;p.proposal.estimatedValue=quotVal;
+  p.proposal.scopeHtml=scopeHtml;p.proposal.scopeItems=JSON.parse(JSON.stringify(_newScopeItems));p.proposal.estimatedValue=quotVal;
   p.proposal.expectedStartDate=startDate;p.proposal.submittedBy=by;
   p.proposal.submittedAt=new Date().toISOString().split("T")[0];
   p.proposal.quotationNumber=quotNum;
   p.proposal.reapprovals=finalReapprovals;
-  p.proposal.proposalStage=pStage;
+  p.proposal.projectTypes=[folderCat];
   p.workflowStatus="allocated";
-  p.proposal.folder=folder;
   p.activityLog=[{stageName:"Project Created",oldStatus:"",newStatus:"allocated",by,note:"Submitted by proposals team",at:new Date().toISOString()}];
-  p.proposalLog=[{action:"Project Created",by,detail:`Quot: ${quotNum} · AED ${quotVal} · Stage: ${pStage}`,at:new Date().toISOString()}];
+  p.proposalLog=[{action:"Project Created",by,detail:`Quot: ${quotNum} · AED ${quotVal} · Folder: ${folderCat}`,at:new Date().toISOString()}];
   _newReapprovals=[];
+  _newScopeItems=[];
+ 
   const ok=await fbSet("projects/"+p.id,p);
   if(ok){ALL_PROJECTS[p.id]=p;S.proposalTab="list";render();}
   else{alert("Error saving. Check Firebase connection.");loadProposalProjects();}
@@ -1206,11 +1183,167 @@ async function allocateProposal(id){
   p.proposalLog.push({action:"Marked as Allocated",by:"Proposals Team",detail:"",at:new Date().toISOString()});
   await fbSet("projects/"+id,p);render();
 }
+async function duplicateProposal(id){
+  const src=ALL_PROJECTS[id];if(!src)return;
+  document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Duplicating project...</div></div>`;
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=makeId();
+  copy.createdAt=new Date().toISOString().split("T")[0];
+  copy.workflowStatus="proposal";
+  copy.activityLog=[];
+  copy.proposalLog=[{action:"Duplicated",by:"Proposals Team",detail:`Copied from "${src.project&&src.project.title||"project"}"`,at:new Date().toISOString()}];
+  if(copy.project)copy.project.title=(src.project&&src.project.title?src.project.title:"New Project")+" (Copy)";
+  if(!copy.stages)copy.stages=blankStages();
+  copy.stages=copy.stages.map(st=>({...st,status:"",appNum:"",dateA:"",dateB:""}));
+  if(!copy.docs)copy.docs=blankDocs();
+  copy.docs=(copy.docs||[]).map(g=>({...g,items:(g.items||[]).map(it=>({...it,status:"pending"}))}));
+  const ok=await fbSet("projects/"+copy.id,copy);
+  if(ok){ALL_PROJECTS[copy.id]=copy;S.proposalTab="list";render();}
+  else{alert("Error duplicating. Check Firebase connection.");render();}
+}
+async function deleteProposal(id){
+  const p=ALL_PROJECTS[id];if(!p)return;
+  const title=(p.project&&p.project.title)||"this project";
+  if(!confirm(`Delete "${title}"? This cannot be undone.`))return;
+  document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Deleting...</div></div>`;
+  const ok=await fbDelete("projects/"+id);
+  if(ok){delete ALL_PROJECTS[id];render();}
+  else{alert("Error deleting. Check Firebase connection.");render();}
+}
+async function editProposalScope(id){
+  document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div><div style="font-size:13px;color:#888">Loading proposal...</div></div>`;
+  const data=await fbGet("projects/"+id);
+  if(!data){alert("Could not load this proposal. Check Firebase connection.");render();return;}
+  PROJ=migrateProject(data);
+  S.editingProposalId=id;
+  render();
+}
+function cancelEditProposal(){
+  S.editingProposalId=null;S.proposalTab="list";render();
+}
+function addEditReapproval(){
+  if(!PROJ.proposal.reapprovals)PROJ.proposal.reapprovals=[];
+  PROJ.proposal.reapprovals.push({title:"",quotationNumber:"",value:"",scopeHtml:""});
+  render();
+}
+function removeEditReapproval(i){
+  PROJ.proposal.reapprovals.splice(i,1);
+  render();
+}
+async function saveProposalEdit(){
+  if(!PROJ)return;
+  const quotNum=(document.getElementById("ep-quot-num")?.value||"").trim();
+  const quotVal=(document.getElementById("ep-quot-val")?.value||"").trim();
+  if(!quotNum||!quotVal){alert("Please enter the main Quotation Number and Value.");return;}
+  if(!PROJ.proposal.scopeItems||!PROJ.proposal.scopeItems.length){alert("Please keep at least one Scope of Works item.");return;}
+  const scopeEl=document.getElementById("ep-scope-editor");
+  if(scopeEl)PROJ.proposal.scopeHtml=scopeEl.innerHTML;
+  (PROJ.proposal.reapprovals||[]).forEach((_,ri)=>{
+    const ed=document.getElementById("ep-reapp-editor-"+ri);
+    if(ed)PROJ.proposal.reapprovals[ri].scopeHtml=ed.innerHTML;
+  });
+  PROJ.proposal.quotationNumber=quotNum;
+  PROJ.proposal.estimatedValue=quotVal;
+  if(!PROJ.proposalLog)PROJ.proposalLog=[];
+  PROJ.proposalLog.push({action:"Scope & Quotation Updated",by:"Proposals Team",detail:`Quot: ${quotNum} · AED ${quotVal}`,at:new Date().toISOString()});
+  S.saving=true;render();
+  const ok=await fbSet("projects/"+PROJ.id,PROJ);
+  S.saving=false;
+  if(ok){
+    ALL_PROJECTS[PROJ.id]=PROJ;
+    S.editingProposalId=null;
+    S.proposalTab="list";
+    render();
+  } else {
+    alert("Error saving. Check Firebase connection.");
+    render();
+  }
+}
+function renderEditProposalScope(){
+  const d=PROJ;
+  if(!d)return`<div class="loading"><div class="spinner"></div></div>`;
+  const pr=d.project||{},prop=d.proposal||{};
+  let h=`<div class="pbar-header">
+    <div class="pbar-label" style="cursor:pointer" onclick="cancelEditProposal()">← Editing: ${esc(pr.title||"Proposal")}</div>
+    <div style="display:flex;gap:7px;align-items:center">
+      ${S.saving?`<span style="font-size:11px;color:#c9a752">Saving...</span>`:""}
+      <button class="btn btn-sm" style="background:rgba(255,255,255,0.1);color:#c4b5fd" onclick="cancelEditProposal()">Cancel</button>
+      <button class="btn btn-sm btn-gold" onclick="saveProposalEdit()">Save Changes</button>
+    </div>
+  </div>
+  <div class="body">
+    <div class="sbox">
+      <div class="sbox-title">Project Details <span style="font-size:10px;color:#888;font-weight:400;margin-left:6px">(read-only)</span></div>
+      <div class="fgrid">
+        <div class="ff"><div class="fl">Project Folder</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(pr.title||"—")}</div></div>
+        <div><div class="fl">Client Name</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(pr.client||"—")}</div></div>
+        <div><div class="fl">Unit / Shop No.</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(pr.unit||"—")}</div></div>
+        <div class="ff"><div class="fl">Location / Mall</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(pr.location||"—")}</div></div>
+        <div><div class="fl">Nature of the Project</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(natureDisplay(pr.unitType))}</div></div>
+        <div><div class="fl">Coordinator</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(pr.coordinator||"—")}</div></div>
+      </div>
+    </div>
+    <div class="quot-box">
+      <div class="quot-box-title">💼 Main Quotation</div>
+      <div class="fgrid">
+        <div><div class="fl">Quotation Number <span class="req-star">*</span></div>
+          <input class="fi" id="ep-quot-num" value="${esc(prop.quotationNumber||"")}"/></div>
+        <div><div class="fl">Quotation Value (AED) <span class="req-star">*</span></div>
+          <input class="fi" type="number" id="ep-quot-val" value="${esc(prop.estimatedValue||"")}"/></div>
+      </div>
+    </div>
+    <div class="sbox">
+      <div class="sbox-title">Scope of Works <span class="req-star">*</span></div>
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <div class="fl">Load Template</div>
+          <select class="fi" id="ep-scope-template" onchange="loadScopeTemplateEdit()">
+            <option value="">— Select Template —</option>
+            ${Object.entries(SCOPE_TEMPLATES).map(([k,t])=>`<option value="${k}">${esc(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <button class="btn btn-sm" style="background:#fff8e6;color:#a06b00;border:1px solid #e8c96a" onclick="addEditScopeItem()">+ Add Item</button>
+      </div>
+      <div id="ep-scope-items"></div>
+    </div>
+    <div class="sbox">
+      <div class="sbox-title">Additional Notes / Scope Description</div>
+      <div class="rte-wrap">${rteToolbar("ep-scope-editor")}</div>
+    </div>
+    <div class="reapp-box">
+      <div class="reapp-box-title">🔄 Re-approval Quotations
+        <span style="font-size:10px;font-weight:400;color:#c08060">Add if any re-approvals are needed</span>
+      </div>
+      ${(prop.reapprovals||[]).map((r,i)=>`
+        <div class="reapp-entry">
+          <div class="reapp-entry-num">RE-APPROVAL #${i+1}</div>
+          <div class="fgrid" style="margin-bottom:8px">
+            <div class="ff"><div class="fl">Re-approval Title <span class="req-star">*</span></div>
+              <input class="fi" value="${esc(r.title)}" oninput="PROJ.proposal.reapprovals[${i}].title=this.value" placeholder="e.g. TAQA Drawing Re-submission"/></div>
+            <div><div class="fl">Quotation Number <span class="req-star">*</span></div>
+              <input class="fi" value="${esc(r.quotationNumber)}" oninput="PROJ.proposal.reapprovals[${i}].quotationNumber=this.value" placeholder="e.g. WHC-2026-042-R1"/></div>
+            <div><div class="fl">Re-approval Value (AED) <span class="req-star">*</span></div>
+              <input class="fi" type="number" value="${esc(r.value)}" oninput="PROJ.proposal.reapprovals[${i}].value=this.value" placeholder="e.g. 5000"/></div>
+          </div>
+          <div class="fl" style="margin-bottom:5px">Re-approval Scope</div>
+          <div class="rte-wrap">${rteToolbar("ep-reapp-editor-"+i)}</div>
+          <button class="btn btn-sm btn-red" style="margin-top:7px" onclick="removeEditReapproval(${i})">✕ Remove</button>
+        </div>`).join("")}
+      <button class="btn btn-sm" style="background:#fde8d8;color:#a04800;border:1px solid #e8a060;margin-top:4px"
+        onclick="addEditReapproval()">+ Add Re-approval Quotation</button>
+    </div>
+    <button class="btn btn-purple" style="width:100%;margin-top:4px;padding:12px;font-size:13px"
+      onclick="saveProposalEdit()">Save Changes</button>
+  </div>
+  <div class="footer">Winner Holistic Consultants · Proposals Module · <a href="${window.location.pathname}" style="color:#888">Back</a></div>`;
+  rteInit("ep-scope-editor",prop.scopeHtml||"");
+  (prop.reapprovals||[]).forEach((r,i)=>rteInit("ep-reapp-editor-"+i,r.scopeHtml||""));
+  return h;
+}
 
-// ── CLIENT VIEW ───────────────────────────────────────────────
 function renderClient(){
   const d=PROJ;if(!d)return"";
-  const fb=d.project.unitType==="F&B";
+  const fb=natureArr(d.project.unitType).includes("F&B");
   const stages=visStages();
   const currentStage=stages.find(s=>{const sv=s.status||"";return sv&&!["received","approved","completed","completed-signed","approved-bcc"].includes(sv);});
   const allDone=doneCount()===stages.length&&stages.length>0;
@@ -1223,17 +1356,15 @@ function renderClient(){
       <div class="pill">Client: ${esc(d.project.client||"—")}</div>
       <div class="pill">Unit: ${esc(d.project.unit||"—")}</div>
       <div class="pill">Coordinator: ${esc(d.project.coordinator||"—")}</div>
-      <div class="pill ${fb?"pill-fb":""}">${fb?"F&amp;B Unit – Gas Approval Included":esc(d.project.unitType||"")}</div>
+      <div class="pill ${fb?"pill-fb":""}">${fb?"F&amp;B Unit – Gas Approval Included":esc(natureDisplay(d.project.unitType))}</div>
     </div>
     <div class="pbar-row"><span>Overall Approval Progress</span><span>${pct()}% Complete</span></div>
     <div class="pbar-bg"><div class="pbar-fill" style="width:${pct()}%"></div></div>
   </div>
   <div class="topbar">
     <span style="font-size:12px;color:#888">${doneCount()} of ${stages.length} stages completed</span>
-    <div class="login-links">
-      ${S.authedCoord?`<button class="btn btn-sm btn-gold" onclick="S.mode='coord';S.tab='stages';render()">Edit Mode</button>`
-        :`<a class="login-link-btn" href="#" onclick="S.mode='coordLogin';S.loginErr='';render();return false;">Coordinator Login</a>`}
-      <a class="login-link-btn" href="${adminLink()}">Admin Login</a>
+   <div class="login-links">
+      ${S.authedCoord?`<button class="btn btn-sm btn-gold" onclick="S.mode='coord';S.tab='stages';render()">Edit Mode</button>`:""}
     </div>
   </div>
   <div class="tabs">
@@ -1249,7 +1380,7 @@ function renderClient(){
       <div class="milestone-text">
         <div class="milestone-title" ${allDone?'style="color:#166a3f"':''}>Current Milestone</div>
         <div class="milestone-value" ${allDone?'style="color:#166a3f"':''}>${allDone?"Project Fully Completed ✓":currentStage?esc(currentStage.name):"Awaiting First Stage Update"}</div>
-        ${currentStage&&currentStage.note?`<div class="milestone-note">${currentStage.note}</div>`:""}
+        ${currentStage&&currentStage.note?`<div class="milestone-note">${esc(currentStage.note)}</div>`:""}
       </div>
       ${currentStage?`<span class="badge ${(STATUS_DISPLAY[currentStage.status||""]||STATUS_DISPLAY[""]).cls}">${(STATUS_DISPLAY[currentStage.status||""]||STATUS_DISPLAY[""]).label}</span>`:""}
     </div>`;
@@ -1265,10 +1396,10 @@ function renderClient(){
           <div class="sname">${esc(st.name)}</div>
           ${st.time?`<div class="stime">⏱ ${esc(st.time)}</div>`:""}
           <div class="badge ${disp.cls}">${disp.label}</div>
-          ${st.appNum?`<div class="s-appnum">📋 Application No: <strong>${esc(st.appNum)}</strong></div>`:""}
+          ${needsAppNum(type,st.status||"")&&st.appNum?`<div class="s-appnum">📋 Application No: <strong>${esc(st.appNum)}</strong></div>`:""}
           ${hasDateFields(type)&&st.dateA?`<div class="s-date">📅 ${dateLabelA(type)}: <strong>${fmtDate(st.dateA)}</strong></div>`:""}
           ${hasDateFields(type)&&st.dateB?`<div class="s-date">✅ ${dateLabelB(type)}: <strong>${fmtDate(st.dateB)}</strong></div>`:""}
-          ${st.note?`<div class="snote">${st.note}</div>`:""}
+          ${st.note?`<div class="snote">${esc(st.note)}</div>`:""}
         </div>
       </div>`;
     });
@@ -1303,13 +1434,12 @@ function renderClient(){
       </div>`).join("")}
     </div>`:""}`;
   }
-  h+=`</div><div class="footer">Winner Holistic Consultants &nbsp;·&nbsp; Abu Dhabi MEPS Portal &nbsp;·&nbsp; All information subject to authority requirements</div>`;
+  h+=`</div><div class="footer">Winner Holistic Consultants &nbsp;·&nbsp; Abu Dhabi MEPS Portal & Overall Project Management &nbsp;·&nbsp; All information subject to authority requirements</div>`;
   return h;
 }
 
-// ── COORD VIEW ────────────────────────────────────────────────
 function renderCoord(){
-  const d=PROJ,fb=d&&d.project.unitType==="F&B",link=d?projectLink(d.id):"";
+  const d=PROJ,fb=d&&natureArr(d.project.unitType).includes("F&B"),link=d?projectLink(d.id):"";
 
   if(S.tab==="list"||!d){
     const myProjects=Object.values(ALL_PROJECTS).filter(p=>{
@@ -1320,7 +1450,7 @@ function renderCoord(){
       const pr=p.project||{},prop=p.proposal||{};
       const st=projStatus(p);
       if(S.coordFilterStatus!=="all"&&st!==S.coordFilterStatus)return false;
-      if(S.coordFilterProjType!=="all"&&pr.unitType!==S.coordFilterProjType)return false;
+      if(S.coordFilterProjType!=="all"&&!natureArr(pr.unitType).includes(S.coordFilterProjType))return false;
       if(S.coordFilterReapp==="yes"&&(!prop.reapprovals||!prop.reapprovals.length))return false;
       if(S.coordFilterReapp==="no"&&prop.reapprovals&&prop.reapprovals.length>0)return false;
       if(S.coordFilterQuot&&!(prop.quotationNumber||"").toLowerCase().includes(S.coordFilterQuot.toLowerCase()))return false;
@@ -1345,8 +1475,7 @@ function renderCoord(){
     const attnMy=myProjects.reduce((acc,p)=>acc+(p.stages||[]).filter(s=>["hold","waiting-applicant","rejected","not-received","comments-shared"].includes(s.status||"")).length,0);
 
     return`<div class="cbar">
-      <div class="clabel">⚙ ${S.coordName?esc(S.coordName)+" – Coordinator":"Coordinator Mode"}</div>
-      <div><a href="${adminLink()}" style="font-size:11px;color:#c9a752;text-decoration:none">Admin →</a></div>
+     <div class="clabel">⚙ ${S.coordName?esc(S.coordName)+" – Coordinator":"Coordinator Mode"}</div>
     </div>
     <div style="background:#fff;padding:12px 18px;border-bottom:1px solid #e5e5e5">
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px">
@@ -1375,7 +1504,7 @@ function renderCoord(){
         <option value="done" ${S.coordFilterStatus==="done"?"selected":""}>Completed</option>
       </select>
       <select class="coord-filter-sel" onchange="S.coordFilterProjType=this.value;render()">
-        <option value="all">All Project Types</option>
+        <option value="all">All Natures</option>
         ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}" ${S.coordFilterProjType===t?"selected":""}>${t}</option>`).join("")}
       </select>
       <select class="coord-filter-sel" onchange="S.coordFilterReapp=this.value;render()">
@@ -1411,7 +1540,7 @@ function renderCoord(){
               <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap">
                 <span class="status-chip ${cCls}">${cTxt}</span>
                 <span class="status-chip chip-new">${esc(p.createdAt||"")}</span>
-                <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(pr.unitType||"")}</span>
+                <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(natureDisplay(pr.unitType))}</span>
                 ${activeStage?`<span class="status-chip" style="background:#eef4ff;color:#1a3a5c;font-size:10px">📍 ${esc(activeStage.name)}</span>`:""}
                 ${reapps.length?`<span class="status-chip" style="background:#fde8d8;color:#a04800">🔄 ${reapps.length} Re-approval(s)</span>`:""}
                 ${attnCount?`<span class="status-chip" style="background:#fde8e8;color:#a32d2d">⚠ ${attnCount} blocked</span>`:""}
@@ -1448,35 +1577,33 @@ function renderCoord(){
     <div class="linkbox-btns">
       <button class="btn btn-sm btn-navy" onclick="copyText('${link}')">Copy Link</button>
       <button class="btn btn-sm" style="background:#f0f0f0;color:#555;border:none" onclick="window.open('${link}','_blank')">Open Tab</button>
+      <button class="btn btn-sm btn-red" onclick="S.modal='delproj';render()">Delete</button>
     </div>
   </div>
   <div class="tabs">
     <div class="tab ${S.tab==="proj"?"on":""}" onclick="S.tab='proj';render()">Project Info</div>
-    <div class="tab ${S.tab==="scope"?"on":""}" onclick="S.tab='scope';render()">Scope &amp; Quotations</div>
+    <div class="tab ${S.tab==="scope"?"on":""}" onclick="S.tab='scope';render()">Scope & Quotations</div>
     <div class="tab ${S.tab==="stages"?"on":""}" onclick="S.tab='stages';render()">Stages</div>
     <div class="tab ${S.tab==="docs"?"on":""}" onclick="S.tab='docs';render()">Documents</div>
     <div class="tab ${S.tab==="activity"?"on":""}" onclick="S.tab='activity';render()">Activity Log</div>
   </div><div class="body">`;
 
   if(S.tab==="proj"){
-    // Colored label helpers
-    const lbl=(text,cls)=>`<div class="proj-info-label ${cls}">${text}</div>`;
     h+=`<div class="sbox">
       <div class="sbox-title">Project Information <span style="font-size:10px;font-weight:400;color:#bbb;margin-left:6px">(set by Proposals Team)</span></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="ff proj-info-field">${lbl("Project Folder","proj-info-label-blue")}<div class="proj-info-value">${esc(d.project.title||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Client Name","proj-info-label-green")}<div class="proj-info-value">${esc(d.project.client||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Project Coordinator","proj-info-label-purple")}<div class="proj-info-value">${esc(d.project.coordinator||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Unit / Shop No.","proj-info-label-teal")}<div class="proj-info-value">${esc(d.project.unit||"—")}</div></div>
-        <div class="ff proj-info-field">${lbl("Location / Mall","proj-info-label-orange")}<div class="proj-info-value">${esc(d.project.location||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Project Type","proj-info-label-gold")}<div class="proj-info-value">${esc(d.project.unitType||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Expected Start","proj-info-label-gray")}<div class="proj-info-value">${fmtDate(prop.expectedStartDate)||"—"}</div></div>
-        <div class="proj-info-field">${lbl("Proposal Stage","proj-info-label-blue")}<div class="proj-info-value">${esc(prop.proposalStage||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Quotation No.","proj-info-label-green")}<div class="proj-info-value" style="color:#1a5276;font-weight:600">${esc(prop.quotationNumber||"—")}</div></div>
-        <div class="proj-info-field">${lbl("Quotation Value","proj-info-label-green")}<div class="proj-info-value" style="color:#166a3f;font-weight:600">${prop.estimatedValue?"AED "+esc(prop.estimatedValue):"—"}</div></div>
-        <div class="proj-info-field">${lbl("Submitted By","proj-info-label-gray")}<div class="proj-info-value">${esc(prop.submittedBy||"—")}</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="ff"><div class="fl">Project Folder</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(d.project.title||"—")}</div></div>
+        <div><div class="fl">Client Name</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(d.project.client||"—")}</div></div>
+        <div><div class="fl">Project Coordinator</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(d.project.coordinator||"—")}</div></div>
+        <div><div class="fl">Unit / Shop No.</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(d.project.unit||"—")}</div></div>
+        <div class="ff"><div class="fl">Location / Mall</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(d.project.location||"—")}</div></div>
+        <div><div class="fl">Nature of the Project</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(natureDisplay(d.project.unitType))}</div></div>
+        <div><div class="fl">Expected Start</div><div style="font-size:13px;color:#222;padding:6px 0">${fmtDate(prop.expectedStartDate)||"—"}</div></div>
+        <div><div class="fl">Quotation No.</div><div style="font-size:13px;color:#1a5276;padding:6px 0;font-weight:600">${esc(prop.quotationNumber||"—")}</div></div>
+        <div><div class="fl">Quotation Value</div><div style="font-size:13px;color:#166a3f;padding:6px 0;font-weight:600">${prop.estimatedValue?"AED "+esc(prop.estimatedValue):"—"}</div></div>
+        <div><div class="fl">Submitted By</div><div style="font-size:13px;color:#222;padding:6px 0">${esc(prop.submittedBy||"—")}</div></div>
       </div>
-      ${ptypes.length?`<div style="margin-top:10px">${lbl("Project Folder Categories","proj-info-label-gold")}<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${ptypes.map(t=>`<span class="proj-type-tag">${esc(t)}</span>`).join("")}</div></div>`:""}
+      ${ptypes.length?`<div style="margin-top:8px"><div class="fl" style="margin-bottom:5px">Project Folder Categories</div><div style="display:flex;gap:5px;flex-wrap:wrap">${ptypes.map(t=>`<span class="proj-type-tag">${esc(t)}</span>`).join("")}</div></div>`:""}
     </div>
     ${reapps.length?`<div class="reapp-box">
       <div class="reapp-box-title">🔄 Re-approval Quotations (${reapps.length})</div>
@@ -1501,13 +1628,24 @@ function renderCoord(){
     <div class="quot-box">
       <div class="quot-box-title">💼 Main Quotation ${prop.quotationNumber?`<span class="quot-num-badge">${esc(prop.quotationNumber)}</span>`:""}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-        <div><div class="fl">Quotation Number</div><div style="font-size:13px;color:#1a5276;font-weight:600;padding:6px 0">${esc(prop.quotationNumber||"—")}</div></div>
-        <div><div class="fl">Quotation Value</div><div style="font-size:13px;color:#166a3f;font-weight:600;padding:6px 0">${prop.estimatedValue?"AED "+esc(prop.estimatedValue):"—"}</div></div>
-        <div><div class="fl">Expected Start</div><div style="font-size:13px;color:#222;padding:6px 0">${fmtDate(prop.expectedStartDate)||"—"}</div></div>
+        <div>
+          <div class="fl">Quotation Number</div>
+          <div style="font-size:13px;color:#1a5276;font-weight:600;padding:6px 0">${esc(prop.quotationNumber||"—")}</div>
+        </div>
+        <div>
+          <div class="fl">Quotation Value</div>
+          <div style="font-size:13px;color:#166a3f;font-weight:600;padding:6px 0">${prop.estimatedValue?"AED "+esc(prop.estimatedValue):"—"}</div>
+        </div>
+        <div>
+          <div class="fl">Expected Start</div>
+          <div style="font-size:13px;color:#222;padding:6px 0">${fmtDate(prop.expectedStartDate)||"—"}</div>
+        </div>
       </div>
     </div>
     <div class="sbox">
-      <div class="sbox-title">Scope of Work${prop.submittedBy?`<span style="font-size:10px;color:#aaa;font-weight:400;margin-left:6px">by ${esc(prop.submittedBy)} on ${fmtDate(prop.submittedAt)}</span>`:""}</div>
+      <div class="sbox-title">Scope of Work
+        ${prop.submittedBy?`<span style="font-size:10px;color:#aaa;font-weight:400;margin-left:6px">by ${esc(prop.submittedBy)} on ${fmtDate(prop.submittedAt)}</span>`:""}
+      </div>
       <div style="font-size:13px;color:#222;line-height:1.8;min-height:60px">${prop.scopeHtml||"<span style='color:#aaa;font-size:12px'>No scope entered yet.</span>"}</div>
     </div>
     ${reapps.length?`<div class="reapp-box">
@@ -1524,12 +1662,24 @@ function renderCoord(){
     </div>`:""}`;
 
   } else if(S.tab==="stages"){
+    const commonOpts=commonStageOptions();
     h+=`<div class="sbox">
-      <div class="sbox-title">Approval Stages <span style="font-size:10px;color:#bbb;font-weight:400;margin-left:8px">⠿ Drag to reorder</span></div>`;
-    d.stages.forEach((st,i)=>{h+=seRow(st,i);});
+      <div class="sbox-title">Approval Stages <span style="font-size:10px;color:#bbb;font-weight:400;margin-left:8px">⠿ Drag or use ↑↓ to reorder</span></div>`;
+    if(S.selectedStages.length>0){
+      h+=`<div class="bulk-bar">
+        <span class="bulk-bar-count">${S.selectedStages.length} stage(s) selected</span>
+        <select class="se-sel" style="flex:1;min-width:160px" onchange="S.bulkStatus=this.value;render()">
+          <option value="">— Set status for selected —</option>
+          ${commonOpts.map(o=>`<option value="${o.v}" ${S.bulkStatus===o.v?"selected":""}>${o.label}</option>`).join("")}
+        </select>
+        <button class="btn btn-sm btn-gold" ${S.bulkStatus===""?"disabled":""} onclick="applyBulkStatus(S.bulkStatus)">Apply</button>
+        <button class="btn btn-sm" style="background:#f0f0f0;color:#666" onclick="clearStageSelection()">Clear</button>
+      </div>
+      ${!commonOpts.length?`<div style="font-size:11px;color:#a04800;margin-bottom:8px">Selected stages have no common status options. Select stages of the same type to bulk-update.</div>`:""}`;
+    }
+    d.stages.forEach((st,i)=>{h+=seRow(st,i,d.stages.length);});
     h+=`<div class="btn-add btn-add-prep" onclick="addDrawingPrepStage()">+ Add Drawing Preparation Stage</div>
     <div class="btn-add btn-add-approval" onclick="addDrawingApprovalStage()">+ Add Drawing Approval Stage</div></div>`;
-    initStageNoteEditors();
 
   } else if(S.tab==="docs"){
     h+=`<div class="sbox"><div class="sbox-title">Standard Document Groups</div>`;
@@ -1543,11 +1693,23 @@ function renderCoord(){
       onclick="PROJ.docs.push({group:'New F&amp;B/Gas Group',fb:true,items:[]});render()">+ Add F&amp;B/Gas Group</div></div>`;
 
   } else if(S.tab==="activity"){
-    const logs=(d.activityLog||[]).slice().reverse();
+    const stageLogs=(d.activityLog||[]).map(log=>({...log,_kind:"stage"}));
+    const propLogs=(d.proposalLog||[]).map(log=>({...log,_kind:"proposal"}));
+    const logs=[...stageLogs,...propLogs].sort((a,b)=>new Date(b.at||0)-new Date(a.at||0));
     h+=`<div class="sbox">
-      <div class="sbox-title">Activity Log <span style="font-size:10px;color:#bbb;font-weight:400;margin-left:6px">${logs.length} entries</span></div>
-      ${logs.length===0?`<div style="text-align:center;padding:20px;color:#bbb;font-size:13px">No activity recorded yet.</div>`:""}
+      <div class="sbox-title">Activity Log <span style="font-size:10px;color:#bbb;font-weight:400;margin-left:6px">${logs.length} entries · full project timeline</span></div>
+      ${logs.length===0?`<div style="text-align:center;padding:20px;color:#bbb;font-size:13px">No activity recorded yet.<br><span style="font-size:11px">Stage status changes appear here automatically.</span></div>`:""}
       ${logs.map(log=>{
+        if(log._kind==="proposal"){
+          return`<div class="act-row">
+            <div class="act-dot" style="background:#7c3aed"></div>
+            <div class="act-body">
+              <div class="act-stage">📋 ${esc(log.action||"Proposal Update")}</div>
+              <div class="act-detail">${log.by?`<strong>${esc(log.by)}</strong>`:""}${log.detail?` · ${esc(log.detail)}`:""}</div>
+            </div>
+            <div class="act-time">${fmtDateTime(log.at)}</div>
+          </div>`;
+        }
         const disp=STATUS_DISPLAY[log.newStatus||""]||STATUS_DISPLAY[""];
         return`<div class="act-row">
           <div class="act-dot ${actDotCls(log.newStatus||"")}"></div>
@@ -1564,7 +1726,6 @@ function renderCoord(){
   h+=`</div>`;return h;
 }
 
-// ── ADMIN DASHBOARD ───────────────────────────────────────────
 function renderAdmin(){
   const all=Object.values(ALL_PROJECTS);
   const proposals=all.filter(p=>p.workflowStatus==="proposal"||p.workflowStatus==="allocated");
@@ -1574,6 +1735,7 @@ function renderAdmin(){
   const active=all.filter(p=>projStatus(p)==="active").length;
   const done=all.filter(p=>projStatus(p)==="done").length;
   const totalReapprovals=all.reduce((s,p)=>s+(p.proposal&&p.proposal.reapprovals?p.proposal.reapprovals.length:0),0);
+
   const coordinators=[...new Set(all.map(p=>p.project&&p.project.coordinator).filter(Boolean))].sort();
 
   let filtered=all.filter(p=>{
@@ -1582,12 +1744,11 @@ function renderAdmin(){
       (pr.location||"").toLowerCase().includes(q)||(pr.coordinator||"").toLowerCase().includes(q)||
       (pr.unit||"").toLowerCase().includes(q);
     const mStatus=S.filterStatus==="all"||projStatus(p)===S.filterStatus;
-    const mType=S.filterType==="all"||pr.unitType===S.filterType;
+    const mType=S.filterType==="all"||natureArr(pr.unitType).includes(S.filterType);
     const mStage=!S.filterStage||S.filterStage==="all"||(p.stages||[]).some(st=>st.name===S.filterStage&&(st.status||"")!=="");
     const mCoord=!S.filterCoord||S.filterCoord==="all"||pr.coordinator===S.filterCoord;
     const mProjType=!S.filterProjType||S.filterProjType==="all"||(p.proposal&&(p.proposal.projectTypes||[]).includes(S.filterProjType));
-    const mPropStage=S.filterProposalStage==="all"||(p.proposal&&p.proposal.proposalStage===S.filterProposalStage);
-    return mS&&mStatus&&mType&&mStage&&mCoord&&mProjType&&mPropStage;
+    return mS&&mStatus&&mType&&mStage&&mCoord&&mProjType;
   }).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
 
   if(!S.adminTab)S.adminTab="proposals";
@@ -1595,7 +1756,7 @@ function renderAdmin(){
   let h=`<div class="admin-hdr">
     <div class="hdr-logo">Winner Holistic Consultants</div>
     <div class="admin-title">Admin Dashboard</div>
-    <div class="admin-sub">Live data · All projects &amp; proposals</div>
+    <div class="admin-sub">Live data · All projects & proposals</div>
   </div>
   <div class="admin-nav-tabs">
     <div class="admin-nav-tab ${S.adminTab==="proposals"?"on":""}" onclick="S.adminTab='proposals';render()">📋 Proposals</div>
@@ -1633,26 +1794,13 @@ function renderAdmin(){
       </div>
 
       <div class="dash-card" style="margin-bottom:12px">
-        <div class="dash-card-title">Proposal Stage Breakdown</div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px">
-          ${PROPOSAL_STAGES.map(s=>{
-            const cnt=proposals.filter(p=>p.proposal&&p.proposal.proposalStage===s).length;
-            return`<div style="background:#f0f4ff;border:1px solid #b3c6f0;border-radius:10px;padding:10px 14px;text-align:center;min-width:80px;cursor:pointer;transition:all 0.15s"
-              onclick="openAdminPopupByProposalStage('${s.replace(/'/g,"\\'")}')">
-              <div style="font-size:20px;font-weight:700;color:#2d4a8a">${cnt}</div>
-              <div style="font-size:10px;color:#555;margin-top:2px">${s}</div>
-            </div>`;
-          }).join("")}
-        </div>
-      </div>
-
-      <div class="dash-card" style="margin-bottom:12px">
-        <div class="dash-card-title">Project Type Breakdown — Proposals</div>
+        <div class="dash-card-title">Nature of the Project Breakdown — Proposals</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px">
           ${PROJECT_TYPES_NEW.map(t=>{
-            const cnt=proposals.filter(p=>p.project&&p.project.unitType===t).length;
+            const cnt=proposals.filter(p=>p.project&&natureArr(p.project.unitType).includes(t)).length;
             return`<div style="background:#fff8e6;border:1px solid #e8c96a;border-radius:10px;padding:10px 14px;text-align:center;min-width:80px;cursor:pointer;transition:all 0.15s"
-              onclick="openAdminPopupByType('projtype','${t}')">
+              onclick="openAdminPopupByType('projtype','${t}')"
+              onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
               <div style="font-size:20px;font-weight:700;color:#a06b00">${cnt}</div>
               <div style="font-size:10px;color:#888;margin-top:2px">${t}</div>
             </div>`;
@@ -1663,10 +1811,11 @@ function renderAdmin(){
       <div class="dash-card" style="margin-bottom:12px">
         <div class="dash-card-title">Folder Category Breakdown</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px">
-          ${["Fitout Project","Live Project","ID Project","Private Project","Others"].map(t=>{
+          ${FOLDER_CATEGORIES.map(t=>{
             const cnt=proposals.filter(p=>p.proposal&&(p.proposal.projectTypes||[]).includes(t)).length;
             return`<div style="background:#ede8fe;border:1px solid #c4b5fd;border-radius:10px;padding:10px 14px;text-align:center;min-width:80px;cursor:pointer;transition:all 0.15s"
-              onclick="openAdminPopupByCategory('${t}')">
+              onclick="openAdminPopupByCategory('${t}')"
+              onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
               <div style="font-size:20px;font-weight:700;color:#4a1fb8">${cnt}</div>
               <div style="font-size:10px;color:#7c3aed;margin-top:2px">${t}</div>
             </div>`;
@@ -1758,9 +1907,9 @@ function renderAdmin(){
           }).join("")}
         </div>
         <div class="dash-card">
-          <div class="dash-card-title">Project Type</div>
+          <div class="dash-card-title">Nature of the Project</div>
           ${PROJECT_TYPES_NEW.map(t=>{
-            const cnt=projects.filter(p=>p.project&&p.project.unitType===t).length;
+            const cnt=projects.filter(p=>p.project&&natureArr(p.project.unitType).includes(t)).length;
             const p2=projects.length?Math.round(cnt/projects.length*100):0;
             return`<div class="bar-row" onclick="openAdminPopupByProjType('${t}')">
               <div class="bar-label" style="width:100px;font-size:11px">${t}</div>
@@ -1821,12 +1970,8 @@ function renderAdmin(){
         <option value="done" ${S.filterStatus==="done"?"selected":""}>Completed</option>
       </select>
       <select class="filter-sel" onchange="S.filterType=this.value;render()">
-        <option value="all">All Project Types</option>
+        <option value="all">All Natures</option>
         ${PROJECT_TYPES_NEW.map(t=>`<option value="${t}" ${S.filterType===t?"selected":""}>${t}</option>`).join("")}
-      </select>
-      <select class="filter-sel" onchange="S.filterProposalStage=this.value;render()">
-        <option value="all">All Proposal Stages</option>
-        ${PROPOSAL_STAGES.map(s=>`<option value="${s}" ${S.filterProposalStage===s?"selected":""}>${s}</option>`).join("")}
       </select>
       <select class="filter-sel" onchange="S.filterCoord=this.value;render()">
         <option value="all">All Coordinators</option>
@@ -1834,16 +1979,18 @@ function renderAdmin(){
       </select>
       <select class="filter-sel" onchange="S.filterProjType=this.value;render()">
         <option value="all">All Folder Categories</option>
-        ${["Fitout Project","Live Project","ID Project","Private Project","Others"].map(t=>`<option value="${t}" ${S.filterProjType===t?"selected":""}>${t}</option>`).join("")}
+        ${FOLDER_CATEGORIES.map(t=>`<option value="${t}" ${S.filterProjType===t?"selected":""}>${t}</option>`).join("")}
       </select>
       <select class="filter-sel" onchange="S.filterStage=this.value;render()">
         <option value="all">All Stages</option>
         ${stageNames.map(sn=>`<option value="${esc(sn)}" ${S.filterStage===sn?"selected":""}>${esc(sn)}</option>`).join("")}
       </select>
       <button class="btn btn-gold btn-sm" onclick="loadAll()">↻ Refresh</button>
+      <button class="btn btn-sm" style="background:#d4f0e3;color:#166a3f" onclick="exportFilteredCSV()">⬇ Export CSV</button>
     </div>
     <div style="padding:8px 18px 0;font-size:12px;color:#888">Showing ${filtered.length} of ${total} records</div>
     <div class="proj-table">`;
+    _lastFilteredProjects=filtered;
 
     if(!filtered.length)h+=`<div style="padding:40px;text-align:center;color:#aaa;font-size:13px">No records match the selected filters.</div>`;
 
@@ -1864,8 +2011,7 @@ function renderAdmin(){
             <div class="proj-row-meta">${esc(pr.client||"No client")} &nbsp;·&nbsp; ${esc(pr.location||"—")} &nbsp;·&nbsp; Unit: ${esc(pr.unit||"—")}${pr.coordinator?" &nbsp;·&nbsp; <strong>"+esc(pr.coordinator)+"</strong>":""}</div>
             <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap">
               <span class="status-chip ${cCls}">${cTxt}</span>
-              <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(pr.unitType||"")}</span>
-              ${prop.proposalStage?`<span class="status-chip" style="background:#f0f4ff;color:#2d4a8a">${esc(prop.proposalStage)}</span>`:""}
+              <span class="status-chip" style="background:#f0f0f0;color:#666">${esc(natureDisplay(pr.unitType))}</span>
               <span class="status-chip chip-new">${esc(p.createdAt||"")}</span>
               ${activeStage?`<span class="status-chip" style="background:#eef4ff;color:#1a3a5c;font-size:10px">📍 ${esc(activeStage.name)}: <span class="badge ${stageDisp.cls}" style="font-size:9px;padding:1px 6px">${stageDisp.label}</span></span>`:""}
               ${prop.quotationNumber?`<span class="status-chip" style="background:#e8f4ff;color:#1a5276">📄 ${esc(prop.quotationNumber)}</span>`:""}
@@ -1892,15 +2038,20 @@ function renderAdmin(){
   return h;
 }
 
-// ── Stage row ─────────────────────────────────────────────────
-function seRow(st,i){
+function seRow(st,i,total){
   const type=st.type||"scope";
   const opts=STAGE_OPTIONS[type]||STAGE_OPTIONS.scope;
   const curStatus=st.status||"";
-  return`<div class="se" draggable="true"
+  const checked=S.selectedStages.includes(i);
+  return`<div class="se ${checked?"se-selected":""}" draggable="true"
     ondragstart="dragStart(event,${i})" ondragover="dragOver(event,${i})"
     ondragleave="dragLeave(event)" ondrop="dragDrop(event,${i})" ondragend="dragEnd()">
+    <input type="checkbox" class="se-check" title="Select for bulk update" ${checked?"checked":""} onchange="toggleStageSelect(${i})"/>
     <div class="se-drag-handle" title="Drag to reorder">⠿</div>
+    <div class="se-reorder">
+      <button class="se-reorder-btn" title="Move up" ${i===0?"disabled":""} onclick="moveStageUp(${i})">▲</button>
+      <button class="se-reorder-btn" title="Move down" ${i===(total-1)?"disabled":""} onclick="moveStageDown(${i})">▼</button>
+    </div>
     <div class="se-num">${i+1}</div>
     <div class="se-body">
       <input class="se-ni" value="${esc(st.name||"")}" oninput="PROJ.stages[${i}].name=this.value" placeholder="Stage name"/>
@@ -1910,10 +2061,10 @@ function seRow(st,i){
         </select>
         <input class="se-time" value="${esc(st.time||"")}" oninput="PROJ.stages[${i}].time=this.value" placeholder="e.g. 5 working days"/>
       </div>
-      <div class="se-appnum-row">
-        <span class="se-label">Application Submission No.</span>
-        <input class="se-appnum-fi" value="${esc(st.appNum||"")}" oninput="PROJ.stages[${i}].appNum=this.value" placeholder="Enter application submission number"/>
-      </div>
+      ${needsAppNum(type,curStatus)?`<div class="se-appnum-row">
+        <span class="se-label">Application No. <span class="req-star">*</span></span>
+        <input class="se-appnum-fi" value="${esc(st.appNum||"")}" oninput="PROJ.stages[${i}].appNum=this.value" placeholder="Enter application number"/>
+      </div>`:""}
       ${hasDateFields(type)?`<div class="se-date-row">
         <div class="se-date-field">
           <span class="se-label">${dateLabelA(type)}</span>
@@ -1924,9 +2075,9 @@ function seRow(st,i){
           <input type="date" class="se-date-fi" value="${esc(st.dateB||"")}" oninput="PROJ.stages[${i}].dateB=this.value"/>
         </div>
       </div>`:""}
-      ${stageNotesToolbar(i)}
+      <input class="se-note" value="${esc(st.note||"")}" oninput="PROJ.stages[${i}].note=this.value" placeholder="Status note for client..."/>
     </div>
-    <button class="btn-del" onclick="PROJ.stages.splice(${i},1);render()">✕</button>
+    <button class="btn-del" onclick="PROJ.stages.splice(${i},1);S.selectedStages=[];render()">✕</button>
   </div>`;
 }
 
@@ -1954,8 +2105,8 @@ function degRow(g,gi,fbRow){
   return h;
 }
 
-function addDrawingPrepStage(){PROJ.stages.push({name:"New Drawing Preparation Stage",type:"drawing_prep",status:"",note:"",time:"",appNum:"",dateA:"",dateB:""});render();initStageNoteEditors();}
-function addDrawingApprovalStage(){PROJ.stages.push({name:"New Drawing Approval Stage",type:"approval_portal",status:"",note:"",time:"",appNum:"",dateA:"",dateB:""});render();initStageNoteEditors();}
+function addDrawingPrepStage(){PROJ.stages.push({name:"New Drawing Preparation Stage",type:"drawing_prep",status:"",note:"",time:"",appNum:"",dateA:"",dateB:""});render();}
+function addDrawingApprovalStage(){PROJ.stages.push({name:"New Drawing Approval Stage",type:"approval_portal",status:"",note:"",time:"",appNum:"",dateA:"",dateB:""});render();}
 
 async function openProject(id){
   document.getElementById("app").innerHTML=`<div class="loading"><div class="spinner"></div></div>`;
@@ -1969,3 +2120,7 @@ async function confirmDelete(){
 }
 
 boot();
+window.addEventListener("scroll",()=>{
+  const btn=document.getElementById("scrollTopBtn");
+  if(btn)btn.classList.toggle("visible",window.scrollY>300);
+});
